@@ -1,28 +1,55 @@
 # PEW
 
-PEW is a compact Tauri desktop tool for testing web apps in an iPhone-style view. The app window has a transparent surround, leaving just the phone and a floating black and white control bar.
+A desktop tool for previewing websites in a mobile viewport.
 
-## Run locally
+## Features
 
-Install Node.js 22.18 or later, pnpm, and Rust, then run:
+- Portrait and landscape views with page state preserved during rotation.
+- Address bar, page history, reload, and navigation controls.
+- Mobile viewport, touch input, and 3× pixel density on Windows.
+- Local development URLs, including loopback and private network addresses.
+- Loading indicators and recoverable error messages.
 
-    pnpm install
-    pnpm tauri dev
+## Development
 
-Enter a URL in the middle of the phone and press Enter, or click the arrow. The website then fills the phone screen. An address bar appears in the control bar; edit it to open another website, or press Escape to restore the current URL. Home returns to the URL input with the last address selected. The control bar provides Back, Forward, Reload, Rotate, Minimize, and Close. Rotate smoothly resizes the PEW window and phone between portrait and landscape while keeping the current page open.
+Requirements: Node.js 22.18 or later, pnpm, and a Rust toolchain. Desktop builds also require the [platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 
-The address bar displays loading progress until the page finishes. Slow loads restore the controls after 20 seconds so you can reload, change the URL, or return Home. Failed loads on Windows display a dismissible message. Back and Forward on Windows follow the actual page history and skip the initial blank page.
+```sh
+pnpm install
+pnpm tauri dev
+```
 
-PEW adds `https://` when a scheme is omitted, or `http://` for localhost, loopback IPv6, and private LAN addresses. On Windows, PEW loads sites in a separate native WebView2 and applies mobile viewport, 3× pixel ratio, touch, and Android user agent emulation before the first site navigation. WebView2's default browser shortcuts are disabled. This simulates a mobile browser for web app testing; it does not run Android itself.
+Enter a URL and press Enter to open it. Edit the address bar to navigate to another page. Escape restores the current address. Home returns to the start screen with the last URL selected.
 
-`pnpm dev` opens a browser preview of the interface. Its iframe preview depends on the website allowing embedding; Back and Forward are disabled there. Use `pnpm tauri dev` for the native website viewer and mobile emulation.
+Addresses default to HTTPS. Localhost, loopback, and private network addresses default to HTTP unless a scheme is provided.
+
+`pnpm dev` runs the interface in a browser. This preview uses an iframe, so websites must allow embedding. Page history and native mobile emulation require the desktop app.
 
 ## Build
 
-    pnpm tauri build
+```sh
+pnpm tauri build
+```
 
 ## Checks
 
-    pnpm test
-    pnpm build
-    cargo check --locked --manifest-path src-tauri/Cargo.toml
+```sh
+pnpm test
+pnpm build
+pnpm format:check
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo check --locked --manifest-path src-tauri/Cargo.toml
+```
+
+## Project structure
+
+| Path                        | Purpose                               |
+| --------------------------- | ------------------------------------- |
+| `src/main.ts`               | Interface state and interactions      |
+| `src/native.ts`             | Typed desktop browser commands        |
+| `src/config.ts`             | Window dimensions and timing settings |
+| `src/rotation.ts`           | Window animation                      |
+| `src/url.ts`                | URL validation and normalization      |
+| `src-tauri/src/commands.rs` | Desktop command handlers              |
+| `src-tauri/src/platform.rs` | Native browser integration            |
+| `tests/`                    | URL regression tests                  |

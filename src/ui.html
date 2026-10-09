@@ -4,24 +4,97 @@
       <span class="toolbar-brand" data-tauri-drag-region>PEW.</span>
     </div>
     <nav class="navigation" aria-label="Page navigation">
-      <button id="back-button" class="tool-button" type="button" aria-label="Go back" title="Back" disabled><i data-lucide="arrow-left" aria-hidden="true"></i></button>
-      <button id="forward-button" class="tool-button" type="button" aria-label="Go forward" title="Forward" disabled><i data-lucide="arrow-right" aria-hidden="true"></i></button>
-      <button id="home-button" class="tool-button" type="button" aria-label="Home" title="Home" disabled><i data-lucide="house" aria-hidden="true"></i></button>
-      <button id="reload-button" class="tool-button" type="button" aria-label="Reload" title="Reload" disabled><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
-      <button id="rotate-button" class="tool-button" type="button" aria-label="Rotate to landscape" title="Rotate to landscape" aria-pressed="false"><i data-lucide="rotate-3d" aria-hidden="true"></i></button>
+      <button
+        id="back-button"
+        class="tool-button"
+        type="button"
+        aria-label="Go back"
+        title="Back"
+        disabled
+      >
+        <i data-lucide="arrow-left" aria-hidden="true"></i>
+      </button>
+      <button
+        id="forward-button"
+        class="tool-button"
+        type="button"
+        aria-label="Go forward"
+        title="Forward"
+        disabled
+      >
+        <i data-lucide="arrow-right" aria-hidden="true"></i>
+      </button>
+      <button
+        id="home-button"
+        class="tool-button"
+        type="button"
+        aria-label="Home"
+        title="Home"
+        disabled
+      >
+        <i data-lucide="house" aria-hidden="true"></i>
+      </button>
+      <button
+        id="reload-button"
+        class="tool-button"
+        type="button"
+        aria-label="Reload"
+        title="Reload"
+        disabled
+      >
+        <i data-lucide="refresh-cw" aria-hidden="true"></i>
+      </button>
+      <button
+        id="rotate-button"
+        class="tool-button"
+        type="button"
+        aria-label="Rotate to landscape"
+        title="Rotate to landscape"
+        aria-pressed="false"
+      >
+        <i data-lucide="rotate-3d" aria-hidden="true"></i>
+      </button>
     </nav>
     <div class="window-actions" aria-label="Window controls">
-      <button id="minimize-button" class="window-button" type="button" aria-label="Minimize" title="Minimize"><i data-lucide="minus" aria-hidden="true"></i></button>
-      <button id="close-button" class="window-button close-button" type="button" aria-label="Close" title="Close"><i data-lucide="x" aria-hidden="true"></i></button>
+      <button
+        id="minimize-button"
+        class="window-button"
+        type="button"
+        aria-label="Minimize"
+        title="Minimize"
+      >
+        <i data-lucide="minus" aria-hidden="true"></i>
+      </button>
+      <button
+        id="close-button"
+        class="window-button close-button"
+        type="button"
+        aria-label="Close"
+        title="Close"
+      >
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
     </div>
     <form id="address-form" class="address-bar" autocomplete="off" hidden>
       <span id="address-status" class="address-status" role="status" aria-live="polite">Ready</span>
-      <input id="address-input" type="text" inputmode="url" spellcheck="false" autocapitalize="off" aria-label="Current website URL" placeholder="Enter a website URL" />
-      <button id="address-go" type="submit" aria-label="Open website" title="Open website"><i data-lucide="arrow-right" aria-hidden="true"></i></button>
+      <input
+        id="address-input"
+        type="text"
+        inputmode="url"
+        spellcheck="false"
+        autocapitalize="off"
+        aria-label="Current website URL"
+        placeholder="Enter a website URL"
+      />
+      <button id="address-go" type="submit" aria-label="Open website" title="Open website">
+        <i data-lucide="arrow-right" aria-hidden="true"></i>
+      </button>
     </form>
     <div id="notice" class="notice" role="alert" hidden>
       <span id="notice-text"></span>
-      <button id="dismiss-notice" type="button" aria-label="Dismiss message"><i data-lucide="x" aria-hidden="true"></i></button>
+      <button id="dismiss-notice" type="button" aria-label="Dismiss message">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
     </div>
   </header>
 
@@ -32,21 +105,35 @@
     <span class="phone-side-button phone-side-button--volume-down" aria-hidden="true"></span>
     <span class="phone-side-button phone-side-button--power" aria-hidden="true"></span>
     <div id="site-viewport" class="site-viewport">
-      <img id="rotation-snapshot" class="rotation-snapshot" alt="" hidden>
+      <img id="rotation-snapshot" class="rotation-snapshot" alt="" hidden />
       <div id="empty-state" class="empty-state">
         <div class="welcome">
-        <p class="welcome-eyebrow">YOUR WEB, PHONE-SIZED</p>
-        <h1>Preview a website.</h1>
-        <p class="welcome-description">Paste a URL or a local development address.</p>
-        <form id="url-form" class="url-form" autocomplete="off">
-          <input id="url-input" type="text" inputmode="url" spellcheck="false" autocapitalize="off" autocomplete="url" aria-label="Website URL" placeholder="example.com or localhost:3000" aria-describedby="input-error" />
-          <button type="submit" aria-label="Open website" title="Open website"><i data-lucide="arrow-right" aria-hidden="true"></i></button>
-        </form>
-        <p id="input-error" class="input-error" role="alert" hidden></p>
-        <p class="welcome-hint">Enter to open <span aria-hidden="true">↵</span></p>
+          <p class="welcome-eyebrow">WEB PREVIEW</p>
+          <h1>Open a website</h1>
+          <p class="welcome-description">Enter a URL or local development address.</p>
+          <form id="url-form" class="url-form" autocomplete="off">
+            <input
+              id="url-input"
+              type="text"
+              inputmode="url"
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="url"
+              aria-label="Website URL"
+              placeholder="example.com or localhost:3000"
+              aria-describedby="input-error"
+            />
+            <button type="submit" aria-label="Open website" title="Open website">
+              <i data-lucide="arrow-right" aria-hidden="true"></i>
+            </button>
+          </form>
+          <p id="input-error" class="input-error" role="alert" hidden></p>
+          <p class="welcome-hint">Enter to open <span aria-hidden="true">↵</span></p>
         </div>
       </div>
-      <div id="loading-state" class="loading-state" hidden><span class="loading-spinner"></span><span>Opening website…</span></div>
+      <div id="loading-state" class="loading-state" hidden>
+        <span class="loading-spinner"></span><span>Opening website…</span>
+      </div>
     </div>
     <div class="phone-home-indicator" aria-hidden="true"></div>
   </main>

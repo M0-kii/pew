@@ -2,11 +2,21 @@
   "name": "pew",
   "private": true,
   "version": "0.1.0",
+  "description": "A desktop tool for previewing websites in a mobile viewport.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/M0-kii/pew.git"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -15,6 +25,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.5",
+    "prettier": "3.9.9",
     "typescript": "^5.9.3",
     "vite": "^8.3.1"
   },
