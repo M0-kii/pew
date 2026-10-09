@@ -1,0 +1,22 @@
+[package]
+name = "pew"
+version = "0.1.0"
+description = "A phone-sized website viewer"
+authors = ["PEW"]
+edition = "2021"
+
+[lib]
+name = "pew_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.5", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.6", features = ["unstable"] }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = '=0.38.2'
+serde_json = '1.0'
+tokio = { version = '1', features = ['time'] }
+windows-core = '=0.61.2'
