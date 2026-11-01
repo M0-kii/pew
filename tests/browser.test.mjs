@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, unlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
@@ -33,12 +33,25 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
   let browser;
   let native;
   let desktop;
+  let profile;
   let nativeMain;
   let savedHistory;
   const errors = [];
   const watch = (page) => page.on('pageerror', (error) => errors.push(error.message));
-  const ready = (page) =>
-    page.waitForFunction(() => document.querySelector('#site-viewport').dataset.state === 'ready');
+  const ready = async (page) => {
+    try {
+      await page.waitForFunction(
+        () => document.querySelector('#site-viewport').dataset.state === 'ready',
+      );
+    } catch (error) {
+      const state = await page.evaluate(() => ({
+        phase: document.querySelector('#site-viewport').dataset.state,
+        error: document.querySelector('#input-error').textContent,
+        notice: document.querySelector('#notice-text').textContent,
+      }));
+      throw new Error(`Preview did not become ready: ${JSON.stringify(state)}`, { cause: error });
+    }
+  };
   const open = async (page, url) => {
     const input = (await page.locator('#url-input').isVisible()) ? '#url-input' : '#address-input';
     await page.locator(input).fill(url);
@@ -137,6 +150,11 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
 
     if (process.env.PEW_NATIVE_TEST === '1') {
       assert.equal(process.platform, 'win32', 'Native tests require Windows');
+      profile = await mkdtemp(path.join(tmpdir(), 'pew-native-'));
+      const debugServer = http.createServer();
+      await new Promise((resolve) => debugServer.listen(0, '127.0.0.1', resolve));
+      const debugPort = debugServer.address().port;
+      await new Promise((resolve) => debugServer.close(resolve));
       desktop = spawn(
         path.resolve(process.env.PEW_NATIVE_EXECUTABLE ?? 'src-tauri/target/debug/pew.exe'),
         [],
@@ -145,7 +163,8 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
           stdio: ['ignore', 'pipe', 'pipe'],
           env: {
             ...process.env,
-            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=9324',
+            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
+            WEBVIEW2_USER_DATA_FOLDER: profile,
           },
         },
       );
@@ -156,7 +175,7 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
       desktop.stdout.resume();
       for (let attempt = 0; attempt < 100; attempt++) {
         try {
-          const response = await fetch('http://127.0.0.1:9324/json/version');
+          const response = await fetch(`http://127.0.0.1:${debugPort}/json/version`);
           if (response.ok) break;
         } catch {
           /* The runtime takes a moment to start its local debugger. */
@@ -164,7 +183,7 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
         if (desktop.exitCode !== null) throw Error(`Desktop exited: ${stderr}`);
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      native = await chromium.connectOverCDP('http://127.0.0.1:9324');
+      native = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
       const context = native.contexts()[0];
       let main;
       for (let attempt = 0; attempt < 100; attempt++) {
@@ -297,6 +316,15 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
     }
     if (native) await native.close();
     if (desktop && desktop.exitCode === null) desktop.kill();
+    if (
+      profile &&
+      path.resolve(profile).startsWith(path.resolve(tmpdir()) + path.sep) &&
+      path.basename(profile).startsWith('pew-native-')
+    ) {
+      await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 }).catch(
+        () => {},
+      );
+    }
     if (browser) await browser.close();
     if (vite) await vite.close();
     finishDelayed();
