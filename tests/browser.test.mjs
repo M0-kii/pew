@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -159,11 +159,11 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
         path.resolve(process.env.PEW_NATIVE_EXECUTABLE ?? 'src-tauri/target/debug/pew.exe'),
         [],
         {
-          windowsHide: true,
+          windowsHide: process.env.CI !== 'true',
           stdio: ['ignore', 'pipe', 'pipe'],
           env: {
             ...process.env,
-            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
+            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort} --disable-gpu --no-sandbox`,
             WEBVIEW2_USER_DATA_FOLDER: profile,
           },
         },
@@ -187,7 +187,18 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
         if (desktop.exitCode !== null) throw Error(`Desktop exited: ${stderr}`);
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      assert.ok(debuggerReady, `Native browser debugger did not start: ${stderr}`);
+      if (!debuggerReady) {
+        const diagnostics = execFileSync(
+          'powershell',
+          [
+            '-NoProfile',
+            '-Command',
+            `$pewProcesses = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq ${desktop.pid} -or $_.ParentProcessId -eq ${desktop.pid} }; $pewProcesses | Select-Object Name,ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress; Get-Process -Id ${desktop.pid} -ErrorAction SilentlyContinue | Select-Object Id,Responding,MainWindowTitle | ConvertTo-Json -Compress; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -in $pewProcesses.ProcessId } | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json -Compress`,
+          ],
+          { encoding: 'utf8', windowsHide: true, timeout: 10_000 },
+        );
+        throw Error(`Native browser debugger did not start: ${stderr}\n${diagnostics}`);
+      }
       native = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
       const context = native.contexts()[0];
       let main;
