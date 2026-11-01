@@ -1,7 +1,7 @@
 {
   "name": "pew",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A desktop tool for previewing websites in a mobile viewport.",
   "repository": {
     "type": "git",

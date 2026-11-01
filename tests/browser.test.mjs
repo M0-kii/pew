@@ -173,16 +173,21 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
         stderr += data;
       });
       desktop.stdout.resume();
-      for (let attempt = 0; attempt < 100; attempt++) {
+      let debuggerReady = false;
+      for (let attempt = 0; attempt < 300; attempt++) {
         try {
           const response = await fetch(`http://127.0.0.1:${debugPort}/json/version`);
-          if (response.ok) break;
+          if (response.ok) {
+            debuggerReady = true;
+            break;
+          }
         } catch {
           /* The runtime takes a moment to start its local debugger. */
         }
         if (desktop.exitCode !== null) throw Error(`Desktop exited: ${stderr}`);
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
+      assert.ok(debuggerReady, `Native browser debugger did not start: ${stderr}`);
       native = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
       const context = native.contexts()[0];
       let main;
