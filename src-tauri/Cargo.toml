@@ -1,6 +1,6 @@
 [package]
 name = "pew"
-version = "0.2.1"
+version = "0.2.2"
 description = "A desktop tool for previewing websites in a mobile viewport"
 repository = "https://github.com/M0-kii/pew"
 edition = "2021"
