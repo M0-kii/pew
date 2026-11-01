@@ -45,6 +45,16 @@
         <i data-lucide="refresh-cw" aria-hidden="true"></i>
       </button>
       <button
+        id="stop-button"
+        class="tool-button"
+        type="button"
+        aria-label="Stop loading"
+        title="Stop loading"
+        hidden
+      >
+        <i data-lucide="square" aria-hidden="true"></i>
+      </button>
+      <button
         id="rotate-button"
         class="tool-button"
         type="button"
@@ -53,6 +63,16 @@
         aria-pressed="false"
       >
         <i data-lucide="rotate-3d" aria-hidden="true"></i>
+      </button>
+      <button
+        id="screenshot-button"
+        class="tool-button"
+        type="button"
+        aria-label="Save screenshot"
+        title="Save screenshot"
+        disabled
+      >
+        <i data-lucide="camera" aria-hidden="true"></i>
       </button>
     </nav>
     <div class="window-actions" aria-label="Window controls">
@@ -76,6 +96,7 @@
       </button>
     </div>
     <form id="address-form" class="address-bar" autocomplete="off" hidden>
+      <span id="viewport-size" class="address-status"></span>
       <span id="address-status" class="address-status" role="status" aria-live="polite">Ready</span>
       <input
         id="address-input"
@@ -98,43 +119,52 @@
     </div>
   </header>
 
-  <main class="phone" aria-label="Phone preview">
-    <div class="phone-island" aria-hidden="true"></div>
-    <span class="phone-side-button phone-side-button--action" aria-hidden="true"></span>
-    <span class="phone-side-button phone-side-button--volume-up" aria-hidden="true"></span>
-    <span class="phone-side-button phone-side-button--volume-down" aria-hidden="true"></span>
-    <span class="phone-side-button phone-side-button--power" aria-hidden="true"></span>
-    <div id="site-viewport" class="site-viewport">
-      <img id="rotation-snapshot" class="rotation-snapshot" alt="" hidden />
-      <div id="empty-state" class="empty-state">
-        <div class="welcome">
-          <p class="welcome-eyebrow">WEB PREVIEW</p>
-          <h1>Open a website</h1>
-          <p class="welcome-description">Enter a URL or local development address.</p>
-          <form id="url-form" class="url-form" autocomplete="off">
-            <input
-              id="url-input"
-              type="text"
-              inputmode="url"
-              spellcheck="false"
-              autocapitalize="off"
-              autocomplete="url"
-              aria-label="Website URL"
-              placeholder="example.com or localhost:3000"
-              aria-describedby="input-error"
-            />
-            <button type="submit" aria-label="Open website" title="Open website">
-              <i data-lucide="arrow-right" aria-hidden="true"></i>
-            </button>
-          </form>
-          <p id="input-error" class="input-error" role="alert" hidden></p>
-          <p class="welcome-hint">Enter to open <span aria-hidden="true">↵</span></p>
+  <div class="device-stage">
+    <div class="device-scale">
+      <main class="phone" aria-label="Phone preview">
+        <div class="phone-island" aria-hidden="true"></div>
+        <span class="phone-side-button phone-side-button--action" aria-hidden="true"></span>
+        <span class="phone-side-button phone-side-button--volume-up" aria-hidden="true"></span>
+        <span class="phone-side-button phone-side-button--volume-down" aria-hidden="true"></span>
+        <span class="phone-side-button phone-side-button--power" aria-hidden="true"></span>
+        <div id="site-viewport" class="site-viewport">
+          <div id="empty-state" class="empty-state">
+            <div class="welcome">
+              <p class="welcome-eyebrow">WEB PREVIEW</p>
+              <h1>Open a website</h1>
+              <p class="welcome-description">Enter a URL or local development address.</p>
+              <form id="url-form" class="url-form" autocomplete="off">
+                <input
+                  id="url-input"
+                  type="text"
+                  inputmode="url"
+                  spellcheck="false"
+                  autocapitalize="off"
+                  autocomplete="url"
+                  aria-label="Website URL"
+                  placeholder="example.com or localhost:3000"
+                  aria-describedby="input-error"
+                />
+                <button type="submit" aria-label="Open website" title="Open website">
+                  <i data-lucide="arrow-right" aria-hidden="true"></i>
+                </button>
+              </form>
+              <p id="input-error" class="input-error" role="alert" hidden></p>
+              <p class="welcome-hint">Enter to open <span aria-hidden="true">↵</span></p>
+              <section id="recent-section" class="recent-section" aria-label="Recent URLs" hidden>
+                <div class="recent-heading">
+                  <span>Recent URLs</span><button id="clear-recent" type="button">Clear</button>
+                </div>
+                <ul id="recent-list"></ul>
+              </section>
+            </div>
+          </div>
+          <div id="loading-state" class="loading-state" hidden>
+            <span class="loading-spinner"></span><span>Opening website…</span>
+          </div>
         </div>
-      </div>
-      <div id="loading-state" class="loading-state" hidden>
-        <span class="loading-spinner"></span><span>Opening website…</span>
-      </div>
+        <div class="phone-home-indicator" aria-hidden="true"></div>
+      </main>
     </div>
-    <div class="phone-home-indicator" aria-hidden="true"></div>
-  </main>
+  </div>
 </div>

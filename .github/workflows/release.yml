@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+  release:
+    needs: checks
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      - run: pnpm install --frozen-lockfile
+      - run: rustup toolchain install stable --profile minimal
+      - run: rustup default stable
+      - name: Verify version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -ne "v$version") { throw 'Tag does not match the application version' }
+      - run: node node_modules/@tauri-apps/cli/tauri.js build --ci --bundles nsis -- --locked
+      - run: pnpm exec playwright install chromium
+      - name: Test packaged executable
+        run: pnpm test
+        env:
+          PEW_NATIVE_TEST: '1'
+          PEW_NATIVE_EXECUTABLE: src-tauri/target/release/pew.exe
+      - name: Publish installer and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe
+          if ($installer.Count -ne 1) { throw 'Expected exactly one installer' }
+          $checksum = Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName
+          "$($checksum.Hash.ToLower())  $($installer.Name)" | Set-Content -Encoding ascii SHA256SUMS.txt
+          gh release create $env:RELEASE_TAG $installer.FullName SHA256SUMS.txt --verify-tag --title "PEW $env:RELEASE_TAG" --notes-file .github/release-notes.md

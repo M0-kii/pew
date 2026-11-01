@@ -2,24 +2,39 @@ import { isTauri } from '@tauri-apps/api/core';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
 import { Webview, getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { createIcons, ArrowLeft, ArrowRight, House, RefreshCw, Rotate3d, Minus, X } from 'lucide';
+import {
+  createIcons,
+  ArrowLeft,
+  ArrowRight,
+  House,
+  RefreshCw,
+  Rotate3d,
+  Minus,
+  X,
+  Square,
+  Camera,
+} from 'lucide';
 import './style.css';
 import ui from './ui.html?raw';
 import { formatUrl } from './url';
-import { TIMING, WINDOW_SIZE, type Orientation, type ViewState } from './config';
+import { TIMING, VIEWPORT_SIZE, type Orientation, type ViewState } from './config';
 import { requireElement } from './dom';
 import { nativeBrowser, mobileUserAgent, type NavigationAction } from './native';
-import { animateWindowSize } from './rotation';
+import { resizeWindow } from './rotation';
+import { NavigationTracker, type NavigationEvent } from './navigation';
+import { recentUrls, rememberUrl, HISTORY_KEY } from './history';
 
 requireElement<HTMLDivElement>('#app').innerHTML = ui;
-createIcons({ icons: { ArrowLeft, ArrowRight, House, RefreshCw, Rotate3d, Minus, X } });
-
+createIcons({
+  icons: { ArrowLeft, ArrowRight, House, RefreshCw, Rotate3d, Minus, X, Square, Camera },
+});
 const urlForm = requireElement<HTMLFormElement>('#url-form');
 const urlInput = requireElement<HTMLInputElement>('#url-input');
 const viewport = requireElement<HTMLDivElement>('#site-viewport');
 const phone = requireElement<HTMLElement>('.phone');
-const rotateButton = requireElement<HTMLButtonElement>('#rotate-button');
-const rotationSnapshot = requireElement<HTMLImageElement>('#rotation-snapshot');
+const stage = requireElement<HTMLDivElement>('.device-stage');
+const deviceScale = requireElement<HTMLDivElement>('.device-scale');
+const toolbar = requireElement<HTMLElement>('.toolbar');
 const emptyState = requireElement<HTMLDivElement>('#empty-state');
 const loadingState = requireElement<HTMLDivElement>('#loading-state');
 const inputError = requireElement<HTMLParagraphElement>('#input-error');
@@ -29,75 +44,97 @@ const addressStatus = requireElement<HTMLSpanElement>('#address-status');
 const addressGo = requireElement<HTMLButtonElement>('#address-go');
 const notice = requireElement<HTMLDivElement>('#notice');
 const noticeText = requireElement<HTMLSpanElement>('#notice-text');
-const buttons = {
-  back: requireElement<HTMLButtonElement>('#back-button'),
-  forward: requireElement<HTMLButtonElement>('#forward-button'),
-  home: requireElement<HTMLButtonElement>('#home-button'),
-  reload: requireElement<HTMLButtonElement>('#reload-button'),
-};
-
+const buttons = Object.fromEntries(
+  ['back', 'forward', 'home', 'reload', 'stop', 'rotate', 'screenshot'].map((name) => [
+    name,
+    requireElement<HTMLButtonElement>(`#${name}-button`),
+  ]),
+);
+const appWindow = isTauri() ? getCurrentWindow() : null;
+const navigation = new NavigationTracker();
 let siteWebview: Webview | null = null;
 let browserFrame: HTMLIFrameElement | null = null;
-let activeUrl = '';
-let loading = false;
-let opening = false;
-let closing = false;
-let canGoBack: boolean | null = null;
-let canGoForward: boolean | null = null;
-let loadTimer: ReturnType<typeof setTimeout> | undefined;
-let navigationVersion = 0;
-let rotating = false;
+let phase: ViewState = 'empty';
 let orientation: Orientation = 'portrait';
-let viewState: ViewState = 'empty';
+let activeUrl = '';
+let epoch = 0;
+let session = 0;
+let stopping = false;
+let canGoBack = false;
+let canGoForward = false;
+let loadTimer: ReturnType<typeof setTimeout> | undefined;
+let syncTask = Promise.resolve();
+let lastBounds = '';
+let refreshing = false;
+let rotationResume: ViewState = 'empty';
 
-function updateControls(): void {
+function setPhase(value: ViewState): void {
+  phase = value;
+  const loading = value === 'loading' || value === 'opening';
+  const busy = value === 'rotating' || value === 'closing';
   const hasSite = Boolean(siteWebview || browserFrame);
-  const busy = opening || closing || rotating;
+  emptyState.hidden = value !== 'empty';
+  loadingState.hidden = !loading;
+  viewport.dataset.state = value;
+  viewport.setAttribute('aria-busy', String(loading));
+  addressForm.hidden = !hasSite && !loading;
+  addressStatus.textContent = loading ? 'Loading…' : 'Ready';
+  addressStatus.dataset.loading = String(loading);
   buttons.home.disabled = busy || !hasSite;
-  buttons.reload.disabled = busy || loading || !hasSite;
-  buttons.back.disabled = busy || loading || !hasSite || canGoBack === false;
-  buttons.forward.disabled = busy || loading || !hasSite || canGoForward === false;
-  rotateButton.disabled = busy || loading;
-  addressGo.disabled = busy || loading;
+  buttons.reload.hidden = loading;
+  buttons.stop.hidden = !loading;
+  buttons.stop.disabled = busy || !hasSite;
+  buttons.reload.disabled = busy || !hasSite;
+  buttons.back.disabled = busy || loading || !canGoBack;
+  buttons.forward.disabled = busy || loading || !canGoForward;
+  buttons.rotate.disabled = busy || loading;
+  buttons.screenshot.disabled = busy || loading || !siteWebview;
+  buttons.screenshot.title = isTauri()
+    ? 'Save screenshot to Pictures/PEW'
+    : 'Screenshot export requires the desktop app';
+  addressGo.disabled = busy || value === 'opening';
   addressInput.readOnly = busy;
-  urlInput.readOnly = busy;
-}
-
-function setState(state: ViewState): void {
-  viewState = state;
-  emptyState.hidden = state !== 'empty';
-  loadingState.hidden = state !== 'loading';
-  viewport.dataset.state = state;
-  addressForm.hidden = state === 'empty';
-  viewport.setAttribute('aria-busy', String(state === 'loading'));
-  addressStatus.textContent = state === 'loading' ? 'Loading…' : 'Ready';
-  addressStatus.dataset.loading = String(state === 'loading');
-  updateControls();
-}
-
-function beginLoading(): void {
-  clearTimeout(loadTimer);
-  loading = true;
-  notice.hidden = true;
-  setState('loading');
-  loadTimer = setTimeout(() => {
-    finishLoading();
-    showNotice(
-      'This website is taking longer than expected. You can reload it, enter another URL, or return Home.',
-    );
-  }, TIMING.pageLoad);
-}
-
-function finishLoading(): void {
-  clearTimeout(loadTimer);
-  loading = false;
-  setState(siteWebview || browserFrame ? 'loaded' : 'empty');
+  void syncLayout().catch((error: unknown) => showNotice(String(error)));
 }
 
 function showNotice(message: string): void {
   noticeText.textContent = message;
   notice.hidden = false;
+  void syncLayout().catch(() => {});
 }
+
+function beginLoading(): void {
+  clearTimeout(loadTimer);
+  notice.hidden = true;
+  if (phase === 'rotating') rotationResume = 'loading';
+  else setPhase('loading');
+  const version = epoch;
+  loadTimer = setTimeout(() => {
+    void stopLoading().then(() => {
+      if (version + 1 === epoch)
+        showNotice('The website took too long to load. Reload it or enter another URL.');
+    });
+  }, TIMING.pageLoad);
+}
+
+function finishLoading(): void {
+  clearTimeout(loadTimer);
+  const next = siteWebview || browserFrame ? 'ready' : 'empty';
+  if (phase === 'rotating') rotationResume = next;
+  else setPhase(next);
+}
+
+function reportError(error: unknown): void {
+  finishLoading();
+  const message = error instanceof Error ? error.message : String(error);
+  if (siteWebview || browserFrame) showNotice(message);
+  else {
+    inputError.textContent = message;
+    inputError.hidden = false;
+    urlInput.focus();
+  }
+}
+
 function bounds() {
   const rect = viewport.getBoundingClientRect();
   return {
@@ -108,12 +145,46 @@ function bounds() {
   };
 }
 
-async function syncBounds(force = false): Promise<void> {
-  const webview = siteWebview;
-  if (!webview || (rotating && !force)) return;
+function syncLayout(force = false): Promise<void> {
+  const size = VIEWPORT_SIZE[orientation];
+  const frame =
+    orientation === 'portrait' ? { width: 411, height: 927 } : { width: 927, height: 411 };
+  const scale = Math.max(
+    0.1,
+    Math.min(
+      1,
+      (innerWidth - 30) / frame.width,
+      (innerHeight - toolbar.offsetHeight - 26) / frame.height,
+    ),
+  );
+  phone.style.width = `${frame.width}px`;
+  phone.style.height = `${frame.height}px`;
+  deviceScale.style.width = `${frame.width}px`;
+  deviceScale.style.height = `${frame.height}px`;
+  deviceScale.style.transform = `scale(${scale})`;
+  stage.style.width = `${frame.width * scale}px`;
+  stage.style.height = `${frame.height * scale}px`;
+  requireElement<HTMLSpanElement>('#viewport-size').textContent = `${size.width} × ${size.height}`;
+  if (!siteWebview || (phase === 'rotating' && !force)) return syncTask;
+  const view = siteWebview;
   const box = bounds();
-  await webview.setPosition(new LogicalPosition(box.x, box.y));
-  await webview.setSize(new LogicalSize(box.width, box.height));
+  const key = JSON.stringify([box, orientation]);
+  if (!force && key === lastBounds) return syncTask;
+  lastBounds = key;
+  const landscape = orientation === 'landscape';
+  syncTask = syncTask
+    .catch(() => {})
+    .then(async () => {
+      if (view !== siteWebview) return;
+      try {
+        await view.setPosition(new LogicalPosition(box.x, box.y));
+        await view.setSize(new LogicalSize(box.width, box.height));
+        await nativeBrowser.resize(size, landscape, box.width / size.width);
+      } catch (error) {
+        if (view === siteWebview && phase !== 'closing') throw error;
+      }
+    });
+  return syncTask;
 }
 
 function waitForWebview(webview: Webview): Promise<void> {
@@ -145,266 +216,285 @@ function waitForWebview(webview: Webview): Promise<void> {
   });
 }
 
-function reportError(message: string): void {
-  if (siteWebview || browserFrame) {
-    finishLoading();
-    showNotice(message);
-    return;
+function renderRecent(): void {
+  let urls: string[] = [];
+  try {
+    urls = recentUrls(localStorage);
+  } catch {
+    /* Storage may be disabled. */
   }
-  activeUrl = '';
-  finishLoading();
-  inputError.textContent = message;
-  inputError.hidden = false;
-  urlInput.focus();
+  const list = requireElement<HTMLUListElement>('#recent-list');
+  list.replaceChildren();
+  for (const url of urls) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = url;
+    button.title = url;
+    button.addEventListener('click', () => void openUrl(url));
+    const item = document.createElement('li');
+    item.append(button);
+    list.append(item);
+  }
+  requireElement<HTMLElement>('#recent-section').hidden = urls.length === 0;
 }
+
+function rememberCurrent(): void {
+  try {
+    rememberUrl(localStorage, activeUrl);
+  } catch {
+    /* Storage may be disabled. */
+  }
+  renderRecent();
+}
+
 async function openUrl(raw: string): Promise<void> {
-  if (loading || opening || closing || rotating) return;
+  if (['opening', 'closing', 'rotating'].includes(phase)) return;
   let url: string;
   try {
     url = formatUrl(raw);
   } catch (error) {
-    reportError((error as Error).message);
-    (siteWebview || browserFrame ? addressInput : urlInput).focus();
+    reportError(error);
     return;
   }
-
-  urlInput.setCustomValidity('');
+  if (phase === 'loading') await stopLoading();
+  const version = ++epoch;
+  navigation.cancel();
   inputError.hidden = true;
-  opening = true;
-  const version = ++navigationVersion;
-  let newWebview: Webview | null = null;
+  notice.hidden = true;
   activeUrl = url;
-  urlInput.value = url;
   addressInput.value = url;
-  beginLoading();
+  urlInput.value = url;
+  setPhase(siteWebview || browserFrame ? 'loading' : 'opening');
+  let created: Webview | null = null;
   try {
     if (isTauri()) {
       await siteEventsReady;
-      if (siteWebview) {
-        await nativeBrowser.navigate(url);
-      } else {
-        const box = bounds();
-        const webview = new Webview(getCurrentWindow(), 'site', {
-          url: 'about:blank',
-          ...box,
-        });
-        newWebview = webview;
-        await waitForWebview(webview);
-        siteWebview = webview;
-        updateControls();
+      if (version !== epoch) return;
+      if (!siteWebview) {
+        await syncLayout();
+        const view = new Webview(getCurrentWindow(), 'site', { url: 'about:blank', ...bounds() });
+        created = view;
+        await waitForWebview(view);
+        if (version !== epoch) {
+          await view.close();
+          return;
+        }
+        siteWebview = view;
+        navigation.reset(++session);
+        const size = VIEWPORT_SIZE[orientation];
         await nativeBrowser.configure({
-          width: box.width,
-          height: box.height,
+          ...size,
           userAgent: mobileUserAgent(),
           landscape: orientation === 'landscape',
+          scale: bounds().width / size.width,
+          session,
         });
-        await nativeBrowser.navigate(url);
-        await syncBounds();
+        if (version !== epoch) return;
       }
+      beginLoading();
+      await nativeBrowser.navigate(url);
     } else {
       browserFrame?.remove();
-      browserFrame = document.createElement('iframe');
-      browserFrame.className = 'browser-fallback';
-      browserFrame.title = 'Website preview';
-      canGoBack = false;
-      canGoForward = false;
-      const frame = browserFrame;
+      const frame = document.createElement('iframe');
+      browserFrame = frame;
+      frame.className = 'browser-fallback';
+      frame.title = 'Website preview';
       frame.addEventListener('load', () => {
-        if (browserFrame === frame && version === navigationVersion) finishLoading();
+        if (frame !== browserFrame || version !== epoch) return;
+        finishLoading();
+        rememberCurrent();
       });
       frame.addEventListener('error', () => {
-        if (browserFrame === frame)
-          reportError('The website could not be opened. Check the URL and try again.');
+        if (frame === browserFrame && version === epoch)
+          reportError('The website could not be opened. Check the URL.');
       });
-      browserFrame.src = url;
-      viewport.append(browserFrame);
+      beginLoading();
+      frame.src = url;
+      viewport.append(frame);
     }
   } catch (error) {
-    if (newWebview) {
+    if (created && created === siteWebview) {
       try {
-        await newWebview.close();
+        await created.close();
       } catch {
         /* The failed view may already be closed. */
       }
       siteWebview = null;
     }
-    reportError(String(error));
+    if (version === epoch) reportError(error);
+  }
+}
+
+async function stopLoading(): Promise<void> {
+  if (phase === 'opening') {
+    await goHome();
+    return;
+  }
+  if (phase !== 'loading') return;
+  ++epoch;
+  navigation.cancel();
+  clearTimeout(loadTimer);
+  stopping = true;
+  try {
+    if (siteWebview) await nativeBrowser.action('stop');
+    else {
+      browserFrame?.remove();
+      browserFrame = null;
+    }
+    navigation.cancel();
+    finishLoading();
+  } catch (error) {
+    reportError(error);
   } finally {
-    opening = false;
-    updateControls();
+    stopping = false;
   }
 }
 
 async function action(name: NavigationAction): Promise<void> {
-  if (!activeUrl || loading || opening || closing || rotating) return;
+  if (name === 'stop') {
+    await stopLoading();
+    return;
+  }
+  if (phase !== 'ready') return;
+  if (!isTauri()) {
+    if (name === 'reload') await openUrl(activeUrl);
+    return;
+  }
+  ++epoch;
+  navigation.cancel();
+  beginLoading();
   try {
-    beginLoading();
-    if (isTauri()) {
-      await nativeBrowser.action(name);
-    } else if (browserFrame?.contentWindow) {
-      if (name === 'reload') browserFrame.src = activeUrl;
-    }
+    await nativeBrowser.action(name);
   } catch (error) {
-    reportError(String(error));
+    reportError(error);
   }
 }
 
 async function goHome(): Promise<void> {
-  if (opening || closing || rotating) return;
-  closing = true;
-  ++navigationVersion;
+  if (phase === 'rotating' || phase === 'closing') return;
+  ++epoch;
+  navigation.reset(++session);
   clearTimeout(loadTimer);
-  loading = false;
-  updateControls();
+  setPhase('closing');
   try {
     if (siteWebview) await siteWebview.close();
   } catch (error) {
-    closing = false;
-    reportError(`Could not return Home: ${String(error)}`);
+    reportError(error);
     return;
   }
   siteWebview = null;
   browserFrame?.remove();
   browserFrame = null;
-  urlInput.value = activeUrl || urlInput.value;
+  canGoBack = false;
+  canGoForward = false;
+  urlInput.value = activeUrl;
   activeUrl = '';
-  canGoBack = null;
-  canGoForward = null;
-  urlInput.setCustomValidity('');
   inputError.hidden = true;
   notice.hidden = true;
-  closing = false;
-  setState('empty');
+  lastBounds = '';
+  setPhase('empty');
+  renderRecent();
   urlInput.focus();
   urlInput.select();
 }
 
-function animatePhone(from: Keyframe, to: Keyframe, duration: number): Animation {
-  return phone.animate([from, to], {
-    duration,
-    easing: 'cubic-bezier(.22, 1, .36, 1)',
-    fill: 'forwards',
-  });
-}
-
-function applyOrientation(value: Orientation): void {
-  orientation = value;
-  phone.dataset.orientation = value;
-  const landscape = value === 'landscape';
-  const label = landscape ? 'Rotate to portrait' : 'Rotate to landscape';
-  rotateButton.setAttribute('aria-pressed', String(landscape));
-  rotateButton.setAttribute('aria-label', label);
-  rotateButton.title = label;
-}
-
 async function rotatePhone(): Promise<void> {
-  if (rotating || loading || opening || closing) return;
-  rotating = true;
-  updateControls();
-
+  if (phase !== 'empty' && phase !== 'ready') return;
   const previous = orientation;
   const next = previous === 'portrait' ? 'landscape' : 'portrait';
-  const angle = next === 'landscape' ? 90 : -90;
-  const animate = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let siteHidden = false;
-  let outgoing: Animation | null = null;
-  let incoming: Animation | null = null;
-
+  rotationResume = phase;
+  setPhase('rotating');
+  let hidden = false;
   try {
-    if (siteWebview && animate) {
-      try {
-        rotationSnapshot.src = await nativeBrowser.snapshot();
-        await rotationSnapshot.decode();
-        rotationSnapshot.hidden = false;
-        await siteWebview.hide();
-        siteHidden = true;
-      } catch (snapshotError) {
-        rotationSnapshot.hidden = true;
-        console.warn('PEW could not prepare a rotation snapshot:', snapshotError);
-      }
-    }
-
-    if (animate) {
-      outgoing = animatePhone(
-        { transform: 'rotate(0deg) scale(1)', opacity: 1 },
-        { transform: 'rotate(' + angle + 'deg) scale(.44)', opacity: 0.12 },
-        TIMING.rotation / 2,
-      );
-    }
-    const windowMotion = animate
-      ? animateWindowSize(appWindow, previous, next, TIMING.rotation).then(
-          () => null,
-          (error: unknown) => error,
-        )
-      : Promise.resolve(null);
-    if (outgoing) await outgoing.finished;
-    if (!animate && appWindow) {
-      await appWindow.setSize(new LogicalSize(WINDOW_SIZE[next].width, WINDOW_SIZE[next].height));
-      await appWindow.center();
-    }
-
-    applyOrientation(next);
-
-    if (animate) {
-      incoming = animatePhone(
-        { transform: 'rotate(' + -angle + 'deg) scale(.44)', opacity: 0.12 },
-        { transform: 'rotate(0deg) scale(1)', opacity: 1 },
-        TIMING.rotation / 2,
-      );
-      outgoing?.cancel();
-      outgoing = null;
-    }
-    const [windowError] = await Promise.all([
-      windowMotion,
-      incoming?.finished ?? Promise.resolve(),
-    ]);
-    if (windowError) throw windowError;
-
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    await syncBounds(true);
     if (siteWebview) {
-      const box = bounds();
-      await nativeBrowser.resize(box, next === 'landscape');
+      await siteWebview.hide();
+      hidden = true;
+    }
+    await resizeWindow(appWindow, next);
+    orientation = next;
+    phone.dataset.orientation = next;
+    buttons.rotate.setAttribute('aria-pressed', String(next === 'landscape'));
+    buttons.rotate.setAttribute(
+      'aria-label',
+      next === 'landscape' ? 'Rotate to portrait' : 'Rotate to landscape',
+    );
+    buttons.rotate.title = buttons.rotate.getAttribute('aria-label')!;
+    await syncLayout(true);
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      await phone.animate([{ opacity: 0.5 }, { opacity: 1 }], { duration: TIMING.rotation })
+        .finished;
     }
   } catch (error) {
-    console.error('Could not rotate PEW:', error);
-    showNotice('Could not rotate the preview. Please try again.');
-    applyOrientation(previous);
-    if (appWindow) {
-      try {
-        await appWindow.setSize(
-          new LogicalSize(WINDOW_SIZE[previous].width, WINDOW_SIZE[previous].height),
-        );
-        await appWindow.center();
-        await syncBounds(true);
-        if (siteWebview) {
-          const box = bounds();
-          await nativeBrowser.resize(box, previous === 'landscape');
-        }
-      } catch (restoreError) {
-        console.error('Could not restore PEW window:', restoreError);
-      }
+    orientation = previous;
+    phone.dataset.orientation = previous;
+    buttons.rotate.setAttribute('aria-pressed', String(previous === 'landscape'));
+    buttons.rotate.setAttribute(
+      'aria-label',
+      previous === 'landscape' ? 'Rotate to portrait' : 'Rotate to landscape',
+    );
+    buttons.rotate.title = buttons.rotate.getAttribute('aria-label')!;
+    try {
+      await resizeWindow(appWindow, previous);
+      await syncLayout(true);
+    } catch (restoreError) {
+      showNotice(String(restoreError));
     }
+    showNotice(`Could not rotate the preview: ${String(error)}`);
   } finally {
-    outgoing?.cancel();
-    incoming?.cancel();
-    if (siteHidden && siteWebview) {
+    if (hidden && siteWebview) {
       try {
         await siteWebview.show();
       } catch (error) {
-        console.error('Could not restore website view:', error);
+        showNotice(String(error));
       }
     }
-    rotationSnapshot.hidden = true;
-    rotationSnapshot.removeAttribute('src');
-    rotating = false;
-    setState(viewState);
+    setPhase(rotationResume);
   }
 }
-urlInput.addEventListener('input', () => {
-  urlInput.setCustomValidity('');
-  inputError.hidden = true;
-});
+
+async function refreshSiteState(): Promise<void> {
+  if (!siteWebview || phase !== 'ready' || refreshing) return;
+  const view = siteWebview;
+  const version = epoch;
+  refreshing = true;
+  try {
+    const state = await nativeBrowser.state();
+    if (view !== siteWebview || version !== epoch || phase !== 'ready') return;
+    canGoBack = state.canGoBack ?? false;
+    canGoForward = state.canGoForward ?? false;
+    if (/^https?:/.test(state.url)) {
+      activeUrl = state.url;
+      if (document.activeElement !== addressInput) addressInput.value = activeUrl;
+    }
+    setPhase(phase);
+  } catch {
+    /* The view can disappear while Home is closing it. */
+  } finally {
+    refreshing = false;
+  }
+}
+
+const siteEventsReady = isTauri()
+  ? nativeBrowser.prepare().then(() =>
+      getCurrentWebview().listen<NavigationEvent>('pew:navigation', ({ payload }) => {
+        if (!siteWebview || phase === 'closing' || !navigation.accept(payload)) return;
+        if (stopping) {
+          navigation.cancel();
+          return;
+        }
+        if (payload.phase === 'started') beginLoading();
+        else if (payload.phase === 'failed')
+          reportError('The website could not be loaded. Check the address and your connection.');
+        else {
+          finishLoading();
+          void refreshSiteState().then(() => {
+            if (payload.phase === 'finished') rememberCurrent();
+          });
+        }
+      }),
+    )
+  : Promise.resolve(() => {});
+void siteEventsReady.catch(() => {});
 
 urlForm.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -414,91 +504,62 @@ addressForm.addEventListener('submit', (event) => {
   event.preventDefault();
   void openUrl(addressInput.value);
 });
+urlInput.addEventListener('input', () => {
+  inputError.hidden = true;
+});
 addressInput.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     addressInput.value = activeUrl;
     addressInput.blur();
   }
 });
+for (const name of ['back', 'forward', 'reload', 'stop'] as const)
+  buttons[name].addEventListener('click', () => void action(name));
+buttons.home.addEventListener('click', () => void goHome());
+buttons.rotate.addEventListener('click', () => void rotatePhone());
+buttons.screenshot.addEventListener('click', () => {
+  if (phase !== 'ready' || !siteWebview) return;
+  buttons.screenshot.disabled = true;
+  void nativeBrowser
+    .exportSnapshot()
+    .then((path) => showNotice(`Screenshot saved: ${path}`))
+    .catch(reportError)
+    .finally(() => setPhase(phase));
+});
 requireElement<HTMLButtonElement>('#dismiss-notice').addEventListener('click', () => {
   notice.hidden = true;
+  void syncLayout();
 });
-buttons.back.addEventListener('click', () => void action('back'));
-buttons.forward.addEventListener('click', () => void action('forward'));
-buttons.reload.addEventListener('click', () => void action('reload'));
-buttons.home.addEventListener('click', () => void goHome());
-rotateButton.addEventListener('click', () => void rotatePhone());
-
-const appWindow = isTauri() ? getCurrentWindow() : null;
+requireElement<HTMLButtonElement>('#clear-recent').addEventListener('click', () => {
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+    renderRecent();
+  } catch {
+    showNotice('Recent URLs could not be cleared.');
+  }
+});
 requireElement<HTMLButtonElement>('#minimize-button').addEventListener('click', () => {
-  if (appWindow) void appWindow.minimize();
+  void appWindow?.minimize().catch(reportError);
 });
 requireElement<HTMLButtonElement>('#close-button').addEventListener('click', () => {
-  if (appWindow) void appWindow.close();
+  void appWindow?.close().catch(reportError);
 });
-
-function scheduleBoundsSync(): void {
-  void syncBounds().catch(() => {
-    /* A closing webview may no longer have bounds. */
-  });
-}
-const resizeObserver = new ResizeObserver(scheduleBoundsSync);
-resizeObserver.observe(viewport);
-window.addEventListener('resize', scheduleBoundsSync);
-
-const siteEventsReady = isTauri()
-  ? Promise.all([
-      getCurrentWebview().listen<[string, boolean]>(
-        'pew:page-load',
-        ({ payload: [url, started] }) => {
-          if (!siteWebview || closing || !/^https?:/.test(url)) return;
-          activeUrl = url;
-          if (document.activeElement !== addressInput) addressInput.value = url;
-          if (started) beginLoading();
-          else {
-            finishLoading();
-            void refreshSiteState();
-          }
-        },
-      ),
-      getCurrentWebview().listen<string>('pew:load-error', ({ payload }) => {
-        if (siteWebview && !closing) reportError(payload);
-      }),
-    ])
-  : Promise.resolve([]);
-// Keep startup listener failures handled until openUrl can display them.
-void siteEventsReady.catch(() => {});
-
-let refreshing = false;
-async function refreshSiteState(): Promise<void> {
-  if (!isTauri() || !siteWebview || closing || refreshing) return;
-  refreshing = true;
-  const version = navigationVersion;
-  try {
-    const state = await nativeBrowser.state();
-    if (version !== navigationVersion || !siteWebview) return;
-    canGoBack = state.canGoBack;
-    canGoForward = state.canGoForward;
-    if (state.url && /^https?:/.test(state.url)) {
-      activeUrl = state.url;
-      if (document.activeElement !== addressInput) addressInput.value = state.url;
-    }
-    updateControls();
-  } catch {
-    // A navigation in progress may briefly have no readable URL.
-  } finally {
-    refreshing = false;
-  }
-}
-const stateInterval = setInterval(() => void refreshSiteState(), TIMING.stateRefresh);
+const observer = new ResizeObserver(() => {
+  void syncLayout().catch((error: unknown) => showNotice(String(error)));
+});
+observer.observe(toolbar);
+window.addEventListener('resize', () => {
+  void syncLayout().catch((error: unknown) => showNotice(String(error)));
+});
+const interval = setInterval(() => void refreshSiteState(), TIMING.stateRefresh);
 window.addEventListener(
   'pagehide',
   () => {
     clearTimeout(loadTimer);
-    clearInterval(stateInterval);
-    resizeObserver.disconnect();
+    clearInterval(interval);
+    observer.disconnect();
   },
   { once: true },
 );
-
-setState('empty');
+renderRecent();
+setPhase('empty');

@@ -150,18 +150,7 @@ input:focus-visible {
   background: transparent;
   color: inherit;
 }
-.shell:has(.address-bar:not([hidden])) .phone {
-  height: min(806px, calc(100vh - 116px));
-}
-.shell:has(.address-bar:not([hidden])) .phone[data-orientation='landscape'] {
-  height: min(372px, calc(100vh - 116px));
-}
-.shell:has(.notice:not([hidden])) .phone {
-  height: min(700px, calc(100vh - 184px));
-}
-.shell:has(.notice:not([hidden])) .phone[data-orientation='landscape'] {
-  height: min(372px, calc(100vh - 184px));
-}
+
 .drag-handle {
   display: flex;
   align-items: center;
@@ -327,16 +316,7 @@ input:focus-visible {
   overflow: hidden;
   background: #fff;
 }
-.rotation-snapshot {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  background: #fff;
-  pointer-events: none;
-}
+
 .phone-home-indicator {
   position: absolute;
   bottom: 11px;
@@ -520,4 +500,60 @@ input:focus-visible {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.device-stage {
+  position: relative;
+  flex: 0 0 auto;
+}
+.device-scale {
+  transform-origin: top left;
+}
+.phone,
+.phone[data-orientation='landscape'] {
+  max-width: none;
+}
+#viewport-size {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.recent-section {
+  margin-top: 28px;
+  border-top: 1px solid #eee;
+  padding-top: 14px;
+}
+.recent-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #777;
+  font-size: 11px;
+}
+.recent-heading button {
+  border: 0;
+  padding: 4px;
+  background: none;
+  color: #666;
+  font-size: 11px;
+}
+.recent-section ul {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.recent-section li button {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 8px 0;
+  background: none;
+  color: #333;
+  text-align: left;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-section li button:hover {
+  text-decoration: underline;
 }

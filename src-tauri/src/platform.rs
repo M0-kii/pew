@@ -30,64 +30,129 @@ pub(crate) async fn navigation_history(webview: &Webview) -> Result<NavigationHi
 }
 
 #[cfg(windows)]
-pub(crate) fn observe_navigation(webview: &Webview) -> Result<(), String> {
-    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
-    use webview2_com::NavigationCompletedEventHandler;
-    let app = webview.app_handle().clone();
-    webview.with_webview(move |platform| unsafe {
-        let result = (|| -> windows_core::Result<()> {
-            let core = platform.controller().CoreWebView2()?;
-            let handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
-                if let Some(args) = args {
-                    let mut success = windows_core::BOOL::default();
-                    args.IsSuccess(&mut success)?;
-                    if !success.as_bool() {
-                        let mut status = Default::default();
-                        args.WebErrorStatus(&mut status)?;
-                        // Cancelled navigations are expected when a newer URL replaces one.
-                        if status != COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
-                            let _ = app.emit_to(
-                                EventTarget::Webview { label: crate::MAIN_WEBVIEW.into() },
-                                "pew:load-error",
-                                "The website could not be loaded. Check the address and your connection, then reload or try another URL.",
-                            );
-                        }
-                    }
-                }
-                Ok(())
-            }));
-            let mut token = 0;
-            core.add_NavigationCompleted(&handler, &mut token)?;
-            Ok(())
-        })();
-        if let Err(error) = result {
-            eprintln!("PEW could not observe navigation: {error}");
-        }
-    }).map_err(|error| error.to_string())
+async fn with_core(
+    webview: &Webview,
+    action: impl FnOnce(
+            webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+        ) -> windows_core::Result<()>
+        + Send
+        + 'static,
+) -> Result<(), String> {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    webview
+        .with_webview(move |platform| {
+            let result = unsafe { platform.controller().CoreWebView2() }.and_then(action);
+            let _ = sender.try_send(result.map_err(|error| error.to_string()));
+        })
+        .map_err(|error| error.to_string())?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+        .await
+        .map_err(|_| "Browser setup timed out".to_string())?
+        .ok_or_else(|| "Browser setup was cancelled".to_string())?
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NavigationEvent {
+    pub session: u64,
+    pub id: String,
+    pub phase: &'static str,
+    pub url: String,
 }
 
 #[cfg(windows)]
-pub(crate) fn disable_browser_shortcuts(webview: &Webview) -> Result<(), String> {
+pub(crate) async fn observe_navigation(webview: &Webview, session: u64) -> Result<(), String> {
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    };
+    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
+    use webview2_com::{NavigationCompletedEventHandler, NavigationStartingEventHandler};
+    let app = webview.app_handle().clone();
+    with_core(webview, move |core| unsafe {
+        let current = Arc::new(AtomicU64::new(0));
+        let latest = current.clone();
+        let started_app = app.clone();
+        let start = NavigationStartingEventHandler::create(Box::new(move |_, args| {
+            if let Some(args) = args {
+                let mut id = 0;
+                args.NavigationId(&mut id)?;
+                latest.store(id, Ordering::SeqCst);
+                let _ = started_app.emit_to(
+                    EventTarget::Webview {
+                        label: crate::MAIN_WEBVIEW.into(),
+                    },
+                    "pew:navigation",
+                    NavigationEvent {
+                        session,
+                        id: id.to_string(),
+                        phase: "started",
+                        url: String::new(),
+                    },
+                );
+            }
+            Ok(())
+        }));
+        let done = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
+            if let Some(args) = args {
+                let mut id = 0;
+                args.NavigationId(&mut id)?;
+                if current.load(Ordering::SeqCst) != id {
+                    return Ok(());
+                }
+                let mut success = windows_core::BOOL::default();
+                args.IsSuccess(&mut success)?;
+                let mut status = Default::default();
+                args.WebErrorStatus(&mut status)?;
+                let phase = if success.as_bool() {
+                    "finished"
+                } else if status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
+                    "cancelled"
+                } else {
+                    "failed"
+                };
+                let _ = app.emit_to(
+                    EventTarget::Webview {
+                        label: crate::MAIN_WEBVIEW.into(),
+                    },
+                    "pew:navigation",
+                    NavigationEvent {
+                        session,
+                        id: id.to_string(),
+                        phase,
+                        url: String::new(),
+                    },
+                );
+            }
+            Ok(())
+        }));
+        let mut token = 0;
+        core.add_NavigationStarting(&start, &mut token)?;
+        core.add_NavigationCompleted(&done, &mut token)?;
+        Ok(())
+    })
+    .await
+}
+
+#[cfg(windows)]
+pub(crate) async fn stop(webview: &Webview) -> Result<(), String> {
+    with_core(webview, |core| unsafe { core.Stop() }).await
+}
+
+#[cfg(windows)]
+pub(crate) async fn disable_browser_shortcuts(webview: &Webview) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
     use windows_core::Interface;
-
-    webview
-        .with_webview(|platform| unsafe {
-            let result = (|| -> windows_core::Result<()> {
-                let core = platform.controller().CoreWebView2()?;
-                let settings = core.Settings()?.cast::<ICoreWebView2Settings3>()?;
-                settings.SetAreBrowserAcceleratorKeysEnabled(false)?;
-                Ok(())
-            })();
-            if let Err(error) = result {
-                eprintln!("Could not disable browser shortcuts: {error}");
-            }
-        })
-        .map_err(|error| error.to_string())
+    with_core(webview, |core| unsafe {
+        core.Settings()?
+            .cast::<ICoreWebView2Settings3>()?
+            .SetAreBrowserAcceleratorKeysEnabled(false)
+    })
+    .await
 }
 
 #[cfg(not(windows))]
-pub(crate) fn disable_browser_shortcuts(_webview: &Webview) -> Result<(), String> {
+pub(crate) async fn disable_browser_shortcuts(_webview: &Webview) -> Result<(), String> {
     Ok(())
 }
 
@@ -154,11 +219,13 @@ pub(crate) async fn set_mobile_metrics(
     width: u32,
     height: u32,
     landscape: bool,
+    scale: f64,
 ) -> Result<(), String> {
     let metrics = serde_json::json!({
         "width": width.clamp(1, 10000),
         "height": height.clamp(1, 10000),
         "deviceScaleFactor": 3,
+        "scale": scale.clamp(0.1, 1.0),
         "mobile": true,
         "screenWidth": width.clamp(1, 10000),
         "screenHeight": height.clamp(1, 10000),
@@ -181,6 +248,7 @@ pub(crate) async fn emulate_mobile(
     height: u32,
     user_agent: &str,
     landscape: bool,
+    scale: f64,
 ) -> Result<(), String> {
     let major = user_agent
         .split("Chrome/")
@@ -204,22 +272,19 @@ pub(crate) async fn emulate_mobile(
     });
     call_devtools(webview, "Emulation.setUserAgentOverride", agent.to_string()).await?;
 
-    set_mobile_metrics(webview, width, height, landscape).await?;
+    set_mobile_metrics(webview, width, height, landscape, scale).await?;
     call_devtools(
         webview,
         "Emulation.setTouchEmulationEnabled",
         r#"{"enabled":true,"maxTouchPoints":5}"#.into(),
     )
     .await?;
-    if let Err(error) = call_devtools(
+    call_devtools(
         webview,
         "Emulation.setEmitTouchEventsForMouse",
         r#"{"enabled":true,"configuration":"mobile"}"#.into(),
     )
-    .await
-    {
-        eprintln!("PEW could not map mouse input to touch: {error}");
-    }
+    .await?;
     Ok(())
 }
 
@@ -230,6 +295,7 @@ pub(crate) async fn emulate_mobile(
     _height: u32,
     _user_agent: &str,
     _landscape: bool,
+    _scale: f64,
 ) -> Result<(), String> {
     Ok(())
 }

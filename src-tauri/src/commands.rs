@@ -15,12 +15,31 @@ pub(crate) struct SiteState {
     can_go_forward: Option<bool>,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SiteConfiguration {
+    width: u32,
+    height: u32,
+    user_agent: String,
+    landscape: bool,
+    scale: f64,
+    session: u64,
+}
+
 pub(crate) fn site(app: &AppHandle, caller: &Webview) -> Result<Webview, String> {
     if caller.label() != MAIN_WEBVIEW {
         return Err("This command is only available to the PEW interface".into());
     }
     app.get_webview(SITE_WEBVIEW)
         .ok_or_else(|| "No website is open yet".into())
+}
+
+#[tauri::command]
+pub(crate) async fn configure_interface(caller: Webview) -> Result<(), String> {
+    if caller.label() != MAIN_WEBVIEW {
+        return Err("This command is only available to the PEW interface".into());
+    }
+    disable_browser_shortcuts(&caller).await
 }
 
 #[tauri::command]
@@ -41,6 +60,10 @@ pub(crate) async fn site_action(
     action: String,
 ) -> Result<(), String> {
     let webview = site(&app, &caller)?;
+    #[cfg(windows)]
+    if action == "stop" {
+        return crate::platform::stop(&webview).await;
+    }
     #[cfg(windows)]
     if action == "back" || action == "forward" {
         let history = navigation_history(&webview).await?;
@@ -72,6 +95,7 @@ pub(crate) async fn site_action(
         "back" => webview.eval("history.back()"),
         "forward" => webview.eval("history.forward()"),
         "reload" => webview.reload(),
+        "stop" => webview.eval("window.stop()"),
         _ => return Err("Unknown browser action".into()),
     }
     .map_err(|error| error.to_string())
@@ -109,16 +133,23 @@ pub(crate) async fn site_state(app: AppHandle, caller: Webview) -> Result<SiteSt
 pub(crate) async fn configure_site(
     app: AppHandle,
     caller: Webview,
-    width: u32,
-    height: u32,
-    user_agent: String,
-    landscape: bool,
+    options: SiteConfiguration,
 ) -> Result<(), String> {
+    let SiteConfiguration {
+        width,
+        height,
+        user_agent,
+        landscape,
+        scale,
+        session,
+    } = options;
     let webview = site(&app, &caller)?;
     #[cfg(windows)]
-    observe_navigation(&webview)?;
-    disable_browser_shortcuts(&webview)?;
-    emulate_mobile(&webview, width, height, &user_agent, landscape).await
+    observe_navigation(&webview, session).await?;
+    #[cfg(not(windows))]
+    let _ = session;
+    disable_browser_shortcuts(&webview).await?;
+    emulate_mobile(&webview, width, height, &user_agent, landscape, scale).await
 }
 
 #[tauri::command]
@@ -128,12 +159,13 @@ pub(crate) async fn resize_site(
     width: u32,
     height: u32,
     landscape: bool,
+    scale: f64,
 ) -> Result<(), String> {
     let webview = site(&app, &caller)?;
     #[cfg(windows)]
-    set_mobile_metrics(&webview, width, height, landscape).await?;
+    set_mobile_metrics(&webview, width, height, landscape, scale).await?;
     #[cfg(not(windows))]
-    let _ = (webview, width, height, landscape);
+    let _ = (webview, width, height, landscape, scale);
     Ok(())
 }
 #[tauri::command]
@@ -144,7 +176,7 @@ pub(crate) async fn site_snapshot(app: AppHandle, caller: Webview) -> Result<Str
         let response = call_devtools_response(
             &webview,
             "Page.captureScreenshot",
-            r#"{"format":"jpeg","quality":78,"captureBeyondViewport":false}"#.into(),
+            r#"{"format":"png","captureBeyondViewport":false}"#.into(),
         )
         .await?;
         let payload: serde_json::Value =
@@ -152,11 +184,53 @@ pub(crate) async fn site_snapshot(app: AppHandle, caller: Webview) -> Result<Str
         let data = payload["data"]
             .as_str()
             .ok_or_else(|| "Screenshot data is missing".to_string())?;
-        Ok(format!("data:image/jpeg;base64,{data}"))
+        Ok(format!("data:image/png;base64,{data}"))
     }
     #[cfg(not(windows))]
     {
         let _ = webview;
         Err("Website snapshots are only available on Windows".into())
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn export_snapshot(app: AppHandle, caller: Webview) -> Result<String, String> {
+    let snapshot = site_snapshot(app.clone(), caller).await?;
+    #[cfg(windows)]
+    {
+        use base64::Engine;
+        use std::io::Write;
+        let encoded = snapshot
+            .strip_prefix("data:image/png;base64,")
+            .ok_or("Invalid screenshot format")?;
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| error.to_string())?;
+        let directory = app
+            .path()
+            .picture_dir()
+            .map_err(|error| error.to_string())?
+            .join("PEW");
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let path = directory.join(format!("pew-{timestamp}.png"));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        if let Err(error) = file.write_all(&data) {
+            let _ = std::fs::remove_file(&path);
+            return Err(error.to_string());
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = snapshot;
+        Err("Screenshot export is unavailable on this platform".into())
     }
 }
