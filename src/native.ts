@@ -29,6 +29,7 @@ export const nativeBrowser = {
     invoke<void>('resize_site', { width, height, landscape, scale }),
   snapshot: () => invoke<string>('site_snapshot'),
   exportSnapshot: () => invoke<string>('export_snapshot'),
+  openScreenshotFolder: () => invoke<void>('open_screenshot_folder'),
   state: () => invoke<SiteState>('site_state'),
 };
 

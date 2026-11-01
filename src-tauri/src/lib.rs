@@ -45,7 +45,8 @@ pub fn run() {
             commands::configure_site,
             commands::resize_site,
             commands::site_snapshot,
-            commands::export_snapshot
+            commands::export_snapshot,
+            commands::open_screenshot_folder
         ])
         .run(context)
         .expect("error while running PEW");

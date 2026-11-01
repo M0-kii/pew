@@ -1,7 +1,7 @@
 #[cfg(windows)]
 use crate::platform::{
     call_devtools, call_devtools_response, is_website_entry, navigation_history,
-    observe_navigation, set_mobile_metrics,
+    observe_navigation, observe_shortcuts, set_mobile_metrics,
 };
 use crate::platform::{disable_browser_shortcuts, emulate_mobile};
 use crate::{MAIN_WEBVIEW, SITE_WEBVIEW};
@@ -147,10 +147,40 @@ pub(crate) async fn configure_site(
     let webview = site(&app, &caller)?;
     #[cfg(windows)]
     observe_navigation(&webview, session).await?;
+    #[cfg(windows)]
+    observe_shortcuts(&webview).await?;
     #[cfg(not(windows))]
     let _ = session;
     disable_browser_shortcuts(&webview).await?;
     emulate_mobile(&webview, width, height, &user_agent, landscape, scale).await
+}
+
+#[tauri::command]
+pub(crate) fn open_screenshot_folder(app: AppHandle, caller: Webview) -> Result<(), String> {
+    if caller.label() != MAIN_WEBVIEW {
+        return Err("This command is only available to the PEW interface".into());
+    }
+    #[cfg(windows)]
+    {
+        let directory = app
+            .path()
+            .picture_dir()
+            .map_err(|error| error.to_string())?
+            .join("PEW");
+        if !directory.is_dir() {
+            return Err("The screenshot folder does not exist yet".into());
+        }
+        std::process::Command::new("explorer.exe")
+            .arg(directory)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("Screenshot export is unavailable on this platform".into())
+    }
 }
 
 #[tauri::command]

@@ -8,7 +8,10 @@ import {
   ArrowRight,
   House,
   RefreshCw,
-  Rotate3d,
+  RotateCwSquare,
+  Globe,
+  ChevronDown,
+  Smartphone,
   Minus,
   X,
   Square,
@@ -26,10 +29,21 @@ import { recentUrls, rememberUrl, HISTORY_KEY } from './history';
 
 requireElement<HTMLDivElement>('#app').innerHTML = ui;
 createIcons({
-  icons: { ArrowLeft, ArrowRight, House, RefreshCw, Rotate3d, Minus, X, Square, Camera },
+  icons: {
+    ArrowLeft,
+    ArrowRight,
+    House,
+    RefreshCw,
+    RotateCwSquare,
+    Globe,
+    ChevronDown,
+    Smartphone,
+    Minus,
+    X,
+    Square,
+    Camera,
+  },
 });
-const urlForm = requireElement<HTMLFormElement>('#url-form');
-const urlInput = requireElement<HTMLInputElement>('#url-input');
 const viewport = requireElement<HTMLDivElement>('#site-viewport');
 const phone = requireElement<HTMLElement>('.phone');
 const stage = requireElement<HTMLDivElement>('.device-stage');
@@ -37,13 +51,16 @@ const deviceScale = requireElement<HTMLDivElement>('.device-scale');
 const toolbar = requireElement<HTMLElement>('.toolbar');
 const emptyState = requireElement<HTMLDivElement>('#empty-state');
 const loadingState = requireElement<HTMLDivElement>('#loading-state');
-const inputError = requireElement<HTMLParagraphElement>('#input-error');
 const addressForm = requireElement<HTMLFormElement>('#address-form');
 const addressInput = requireElement<HTMLInputElement>('#address-input');
 const addressStatus = requireElement<HTMLSpanElement>('#address-status');
 const addressGo = requireElement<HTMLButtonElement>('#address-go');
 const notice = requireElement<HTMLDivElement>('#notice');
 const noticeText = requireElement<HTMLSpanElement>('#notice-text');
+const noticeAction = requireElement<HTMLButtonElement>('#notice-action');
+const previewStatus = requireElement<HTMLDivElement>('#preview-status');
+const recentButton = requireElement<HTMLButtonElement>('#recent-button');
+const recentSection = requireElement<HTMLElement>('#recent-section');
 const buttons = Object.fromEntries(
   ['back', 'forward', 'home', 'reload', 'stop', 'rotate', 'screenshot'].map((name) => [
     name,
@@ -68,6 +85,9 @@ let lastBounds = '';
 let refreshing = false;
 let browserArguments: string | undefined;
 let rotationResume: ViewState = 'empty';
+let noticeCallback: (() => void) | undefined;
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+let retryUrl = '';
 
 function setPhase(value: ViewState): void {
   phase = value;
@@ -75,11 +95,12 @@ function setPhase(value: ViewState): void {
   const busy = value === 'rotating' || value === 'closing';
   const hasSite = Boolean(siteWebview || browserFrame);
   emptyState.hidden = value !== 'empty';
-  loadingState.hidden = !loading;
+  loadingState.hidden = !loading || hasSite;
   viewport.dataset.state = value;
   viewport.setAttribute('aria-busy', String(loading));
-  addressForm.hidden = !hasSite && !loading;
-  addressStatus.textContent = loading ? 'Loading…' : 'Ready';
+  toolbar.dataset.loading = String(loading);
+  const status = loading ? 'Loading…' : busy ? 'Updating…' : hasSite ? 'Ready' : 'Mobile preview';
+  if (addressStatus.textContent !== status) addressStatus.textContent = status;
   addressStatus.dataset.loading = String(loading);
   buttons.home.disabled = busy || !hasSite;
   buttons.reload.hidden = loading;
@@ -95,25 +116,48 @@ function setPhase(value: ViewState): void {
     : 'Screenshot export requires the desktop app';
   addressGo.disabled = busy || value === 'opening';
   addressInput.readOnly = busy;
+  recentButton.disabled = busy || value === 'opening';
   void syncLayout().catch((error: unknown) => showNotice(String(error)));
 }
 
-function showNotice(message: string): void {
+function dismissNotice(): void {
+  clearTimeout(noticeTimer);
+  noticeAction.removeAttribute('title');
+  notice.hidden = true;
+  previewStatus.hidden = false;
+  noticeCallback = undefined;
+}
+
+function showNotice(
+  message: string,
+  kind: 'error' | 'success' = 'error',
+  action?: { label: string; run: () => void },
+): void {
+  clearTimeout(noticeTimer);
+  noticeAction.removeAttribute('title');
+  notice.dataset.kind = kind;
   noticeText.textContent = message;
+  noticeText.title = message;
+  noticeText.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  noticeAction.hidden = !action;
+  noticeAction.textContent = action?.label ?? '';
+  noticeCallback = action?.run;
+  previewStatus.hidden = true;
   notice.hidden = false;
-  void syncLayout().catch(() => {});
+  if (kind === 'success') noticeTimer = setTimeout(dismissNotice, 8_000);
 }
 
 function beginLoading(): void {
   clearTimeout(loadTimer);
-  notice.hidden = true;
+  setRecentOpen(false);
+  dismissNotice();
   if (phase === 'rotating') rotationResume = 'loading';
   else setPhase('loading');
   const version = epoch;
   loadTimer = setTimeout(() => {
     void stopLoading().then(() => {
       if (version + 1 === epoch)
-        showNotice('The website took too long to load. Reload it or enter another URL.');
+        showNotice('The website took too long to load.', 'error', retryAction());
     });
   }, TIMING.pageLoad);
 }
@@ -128,12 +172,11 @@ function finishLoading(): void {
 function reportError(error: unknown): void {
   finishLoading();
   const message = error instanceof Error ? error.message : String(error);
-  if (siteWebview || browserFrame) showNotice(message);
-  else {
-    inputError.textContent = message;
-    inputError.hidden = false;
-    urlInput.focus();
-  }
+  showNotice(message, 'error', retryAction());
+}
+
+function retryAction() {
+  return retryUrl ? { label: 'Retry', run: () => void openUrl(retryUrl) } : undefined;
 }
 
 function bounds() {
@@ -149,13 +192,13 @@ function bounds() {
 function syncLayout(force = false): Promise<void> {
   const size = VIEWPORT_SIZE[orientation];
   const frame =
-    orientation === 'portrait' ? { width: 411, height: 927 } : { width: 927, height: 411 };
+    orientation === 'portrait' ? { width: 411, height: 912 } : { width: 912, height: 411 };
   const scale = Math.max(
     0.1,
     Math.min(
       1,
       (innerWidth - 30) / frame.width,
-      (innerHeight - toolbar.offsetHeight - 26) / frame.height,
+      (innerHeight - toolbar.offsetHeight - 34) / frame.height,
     ),
   );
   phone.style.width = `${frame.width}px`;
@@ -165,7 +208,8 @@ function syncLayout(force = false): Promise<void> {
   deviceScale.style.transform = `scale(${scale})`;
   stage.style.width = `${frame.width * scale}px`;
   stage.style.height = `${frame.height * scale}px`;
-  requireElement<HTMLSpanElement>('#viewport-size').textContent = `${size.width} × ${size.height}`;
+  requireElement<HTMLSpanElement>('#viewport-size').textContent =
+    `${size.width} × ${size.height} · ${Math.round(scale * 100)}%`;
   if (!siteWebview || (phase === 'rotating' && !force)) return syncTask;
   const view = siteWebview;
   const box = bounds();
@@ -235,14 +279,44 @@ function renderRecent(): void {
   for (const url of urls) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = url;
+    const parsed = new URL(url);
+    const host = document.createElement('strong');
+    host.textContent = parsed.host;
+    const path = document.createElement('span');
+    path.textContent = parsed.pathname === '/' ? `${parsed.protocol}//` : parsed.pathname;
+    button.append(host, path);
     button.title = url;
-    button.addEventListener('click', () => void openUrl(url));
+    button.setAttribute('aria-label', url);
+    button.addEventListener('click', () => {
+      setRecentOpen(false);
+      void openUrl(url);
+    });
     const item = document.createElement('li');
     item.append(button);
     list.append(item);
   }
-  requireElement<HTMLElement>('#recent-section').hidden = urls.length === 0;
+  requireElement<HTMLElement>('#recent-empty').hidden = urls.length !== 0;
+  requireElement<HTMLButtonElement>('#clear-recent').disabled = urls.length === 0;
+}
+
+function setRecentOpen(open: boolean): void {
+  recentSection.hidden = !open;
+  recentButton.setAttribute('aria-expanded', String(open));
+  if (open) renderRecent();
+  void syncLayout().catch((error: unknown) => showNotice(String(error)));
+}
+
+async function focusAddress(): Promise<void> {
+  if (addressInput.readOnly) return;
+  if (isTauri()) await getCurrentWebview().setFocus();
+  addressInput.focus();
+  addressInput.select();
+}
+
+function clearAddressError(): void {
+  addressForm.removeAttribute('aria-invalid');
+  addressInput.removeAttribute('aria-invalid');
+  addressInput.setAttribute('aria-describedby', 'address-status');
 }
 
 function rememberCurrent(): void {
@@ -260,17 +334,23 @@ async function openUrl(raw: string): Promise<void> {
   try {
     url = formatUrl(raw);
   } catch (error) {
-    reportError(error);
+    addressForm.setAttribute('aria-invalid', 'true');
+    addressInput.setAttribute('aria-invalid', 'true');
+    addressInput.setAttribute('aria-describedby', 'notice-text');
+    showNotice(error instanceof Error ? error.message : String(error));
+    void focusAddress().catch(reportError);
     return;
   }
   if (phase === 'loading') await stopLoading();
   const version = ++epoch;
   navigation.cancel();
-  inputError.hidden = true;
-  notice.hidden = true;
+  setRecentOpen(false);
+  dismissNotice();
+  clearAddressError();
+  retryUrl = url;
   activeUrl = url;
   addressInput.value = url;
-  urlInput.value = url;
+  addressInput.blur();
   setPhase(siteWebview || browserFrame ? 'loading' : 'opening');
   let created: Webview | null = null;
   try {
@@ -305,6 +385,7 @@ async function openUrl(raw: string): Promise<void> {
       }
       beginLoading();
       await nativeBrowser.navigate(url);
+      if (version === epoch) await siteWebview?.setFocus();
     } else {
       browserFrame?.remove();
       const frame = document.createElement('iframe');
@@ -323,6 +404,7 @@ async function openUrl(raw: string): Promise<void> {
       beginLoading();
       frame.src = url;
       viewport.append(frame);
+      frame.focus();
     }
   } catch (error) {
     if (created && created === siteWebview) {
@@ -399,15 +481,16 @@ async function goHome(): Promise<void> {
   browserFrame = null;
   canGoBack = false;
   canGoForward = false;
-  urlInput.value = activeUrl;
+  addressInput.value = activeUrl;
+  clearAddressError();
   activeUrl = '';
-  inputError.hidden = true;
-  notice.hidden = true;
+  retryUrl = '';
+  dismissNotice();
+  setRecentOpen(false);
   lastBounds = '';
   setPhase('empty');
   renderRecent();
-  urlInput.focus();
-  urlInput.select();
+  await focusAddress();
 }
 
 async function rotatePhone(): Promise<void> {
@@ -464,6 +547,7 @@ async function refreshSiteState(): Promise<void> {
     canGoForward = state.canGoForward ?? false;
     if (/^https?:/.test(state.url)) {
       activeUrl = state.url;
+      retryUrl = activeUrl;
       if (document.activeElement !== addressInput) addressInput.value = activeUrl;
     }
     setPhase(phase);
@@ -497,21 +581,26 @@ const siteEventsReady = isTauri()
   : Promise.resolve(() => {});
 void siteEventsReady.catch(() => {});
 
-urlForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  void openUrl(urlInput.value);
-});
 addressForm.addEventListener('submit', (event) => {
   event.preventDefault();
   void openUrl(addressInput.value);
 });
-urlInput.addEventListener('input', () => {
-  inputError.hidden = true;
+addressInput.addEventListener('input', () => {
+  clearAddressError();
+  dismissNotice();
 });
 addressInput.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
+    event.stopPropagation();
+    setRecentOpen(false);
     addressInput.value = activeUrl;
+    clearAddressError();
+    dismissNotice();
     addressInput.blur();
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    setRecentOpen(true);
+    recentSection.querySelector<HTMLButtonElement>('li button')?.focus();
   }
 });
 for (const name of ['back', 'forward', 'reload', 'stop'] as const)
@@ -523,18 +612,76 @@ buttons.screenshot.addEventListener('click', () => {
   buttons.screenshot.disabled = true;
   void nativeBrowser
     .exportSnapshot()
-    .then((path) => showNotice(`Screenshot saved: ${path}`))
+    .then((path) => {
+      showNotice('Screenshot saved to Pictures/PEW.', 'success', {
+        label: 'Open folder',
+        run: () => void nativeBrowser.openScreenshotFolder().catch(reportError),
+      });
+      noticeAction.title = path;
+    })
     .catch(reportError)
     .finally(() => setPhase(phase));
 });
-requireElement<HTMLButtonElement>('#dismiss-notice').addEventListener('click', () => {
-  notice.hidden = true;
-  void syncLayout();
+noticeAction.addEventListener('click', () => noticeCallback?.());
+requireElement<HTMLButtonElement>('#dismiss-notice').addEventListener('click', dismissNotice);
+requireElement<HTMLButtonElement>('#focus-address').addEventListener(
+  'click',
+  () => void focusAddress().catch(reportError),
+);
+recentButton.addEventListener('click', () => setRecentOpen(recentSection.hidden));
+recentSection.addEventListener('keydown', (event) => {
+  const items = Array.from(recentSection.querySelectorAll<HTMLButtonElement>('li button'));
+  const index = items.indexOf(document.activeElement as HTMLButtonElement);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+  }
 });
+document.addEventListener('pointerdown', (event) => {
+  if (!recentSection.hidden && !toolbar.contains(event.target as Node)) setRecentOpen(false);
+});
+document.addEventListener('focusin', (event) => {
+  if (!recentSection.hidden && !toolbar.contains(event.target as Node)) setRecentOpen(false);
+});
+function shortcut(name: string): void {
+  if (name === 'preview-focus') setRecentOpen(false);
+  else if (name === 'address') void focusAddress().catch(reportError);
+  else if (name === 'reload' && !buttons.reload.disabled) void action('reload');
+  else if (name === 'back' && !buttons.back.disabled) void action('back');
+  else if (name === 'forward' && !buttons.forward.disabled) void action('forward');
+  else if (name === 'stop') {
+    if (!recentSection.hidden) {
+      setRecentOpen(false);
+      recentButton.focus();
+    } else if (phase === 'loading' || phase === 'opening') void stopLoading();
+  }
+}
+document.addEventListener('keydown', (event) => {
+  if (event.isComposing || event.repeat) return;
+  const key = event.key.toLowerCase();
+  let name = '';
+  if (!event.shiftKey && !event.altKey && (event.ctrlKey || event.metaKey)) {
+    if (key === 'l') name = 'address';
+    if (key === 'r') name = 'reload';
+  } else if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+    if (key === 'arrowleft') name = 'back';
+    if (key === 'arrowright') name = 'forward';
+  } else if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    if (key === 'f5') name = 'reload';
+    if (key === 'escape') name = 'stop';
+  }
+  if (name) {
+    event.preventDefault();
+    shortcut(name);
+  }
+});
+if (isTauri())
+  void getCurrentWebview().listen<string>('pew:shortcut', ({ payload }) => shortcut(payload));
 requireElement<HTMLButtonElement>('#clear-recent').addEventListener('click', () => {
   try {
     localStorage.removeItem(HISTORY_KEY);
     renderRecent();
+    void syncLayout();
   } catch {
     showNotice('Recent URLs could not be cleared.');
   }
@@ -557,6 +704,7 @@ window.addEventListener(
   'pagehide',
   () => {
     clearTimeout(loadTimer);
+    clearTimeout(noticeTimer);
     clearInterval(interval);
     observer.disconnect();
   },
@@ -564,3 +712,4 @@ window.addEventListener(
 );
 renderRecent();
 setPhase('empty');
+void focusAddress().catch(reportError);

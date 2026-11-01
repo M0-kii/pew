@@ -140,6 +140,115 @@ pub(crate) async fn stop(webview: &Webview) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+fn shortcut_name(key: u32, control: bool, alt: bool, shift: bool) -> Option<&'static str> {
+    match (key, control, alt, shift) {
+        (0x4c, true, false, false) => Some("address"),
+        (0x52, true, false, false) | (0x74, false, false, false) => Some("reload"),
+        (0x25, false, true, false) => Some("back"),
+        (0x27, false, true, false) => Some("forward"),
+        (0x1b, false, false, false) => Some("stop"),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+pub(crate) async fn observe_shortcuts(webview: &Webview) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    };
+    use webview2_com::{AcceleratorKeyPressedEventHandler, FocusChangedEventHandler};
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetKeyState(key: i32) -> i16;
+    }
+    let app = webview.app_handle().clone();
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    webview
+        .with_webview(move |platform| {
+            let result = (|| unsafe {
+                let shortcut_app = app.clone();
+                let handler =
+                    AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+                        let Some(args) = args else {
+                            return Ok(());
+                        };
+                        let mut kind = Default::default();
+                        args.KeyEventKind(&mut kind)?;
+                        if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                            && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
+                        {
+                            return Ok(());
+                        }
+                        let mut key = 0;
+                        args.VirtualKey(&mut key)?;
+                        if let Some(name) = shortcut_name(
+                            key,
+                            GetKeyState(0x11) < 0,
+                            GetKeyState(0x12) < 0,
+                            GetKeyState(0x10) < 0,
+                        ) {
+                            // Escape must still reach the site's dialogs and form controls.
+                            if name != "stop" {
+                                args.SetHandled(true)?;
+                            }
+                            let mut status = Default::default();
+                            args.PhysicalKeyStatus(&mut status)?;
+                            if !status.WasKeyDown.as_bool() {
+                                let _ = shortcut_app.emit_to(
+                                    EventTarget::Webview {
+                                        label: crate::MAIN_WEBVIEW.into(),
+                                    },
+                                    "pew:shortcut",
+                                    name,
+                                );
+                            }
+                        }
+                        Ok(())
+                    }));
+                let focus = FocusChangedEventHandler::create(Box::new(move |_, _| {
+                    let _ = app.emit_to(
+                        EventTarget::Webview {
+                            label: crate::MAIN_WEBVIEW.into(),
+                        },
+                        "pew:shortcut",
+                        "preview-focus",
+                    );
+                    Ok(())
+                }));
+                let controller = platform.controller();
+                let mut token = 0;
+                controller.add_AcceleratorKeyPressed(&handler, &mut token)?;
+                controller.add_GotFocus(&focus, &mut token)
+            })();
+            let _ = sender.try_send(result.map_err(|error| error.to_string()));
+        })
+        .map_err(|error| error.to_string())?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+        .await
+        .map_err(|_| "Keyboard setup timed out".to_string())?
+        .ok_or_else(|| "Keyboard setup was cancelled".to_string())?
+}
+
+#[cfg(all(test, windows))]
+mod shortcut_tests {
+    use super::shortcut_name;
+    #[test]
+    fn recognizes_only_unmodified_browser_shortcuts() {
+        assert_eq!(shortcut_name(0x4c, true, false, false), Some("address"));
+        assert_eq!(shortcut_name(0x52, true, false, false), Some("reload"));
+        assert_eq!(shortcut_name(0x25, false, true, false), Some("back"));
+        assert_eq!(shortcut_name(0x27, false, true, false), Some("forward"));
+        assert_eq!(shortcut_name(0x1b, false, false, false), Some("stop"));
+        assert_eq!(shortcut_name(0x74, false, false, false), Some("reload"));
+        for key in [0x4c, 0x52, 0x25, 0x27] {
+            assert_eq!(shortcut_name(key, false, false, false), None);
+            assert_eq!(shortcut_name(key, true, true, false), None);
+            assert_eq!(shortcut_name(key, true, false, true), None);
+        }
+    }
+}
+
+#[cfg(windows)]
 pub(crate) async fn disable_browser_shortcuts(webview: &Webview) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
     use windows_core::Interface;
@@ -239,7 +348,73 @@ pub(crate) async fn set_mobile_metrics(
         "Emulation.setDeviceMetricsOverride",
         metrics.to_string(),
     )
-    .await
+    .await?;
+    round_site_corners(webview, scale).await
+}
+
+#[cfg(windows)]
+async fn round_site_corners(webview: &Webview, scale: f64) -> Result<(), String> {
+    use std::ffi::c_void;
+    #[repr(C)]
+    #[derive(Default)]
+    struct Rect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetClientRect(window: *mut c_void, rect: *mut Rect) -> i32;
+        fn GetDpiForWindow(window: *mut c_void) -> u32;
+        fn SetWindowRgn(window: *mut c_void, region: *mut c_void, redraw: i32) -> i32;
+    }
+    #[link(name = "gdi32")]
+    extern "system" {
+        fn CreateRoundRectRgn(
+            left: i32,
+            top: i32,
+            right: i32,
+            bottom: i32,
+            width: i32,
+            height: i32,
+        ) -> *mut c_void;
+        fn DeleteObject(object: *mut c_void) -> i32;
+    }
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    webview
+        .with_webview(move |platform| {
+            let result = (|| unsafe {
+                let mut parent = Default::default();
+                platform
+                    .controller()
+                    .ParentWindow(&mut parent)
+                    .map_err(|error| error.to_string())?;
+                let mut rect = Rect::default();
+                if GetClientRect(parent.0, &mut rect) == 0 {
+                    return Err("Could not measure the preview window".into());
+                }
+                let diameter =
+                    (56.0 * scale * f64::from(GetDpiForWindow(parent.0)) / 96.0).round() as i32;
+                // Clip the native child itself; DOM corners cannot mask a separate webview.
+                let region =
+                    CreateRoundRectRgn(0, 0, rect.right + 1, rect.bottom + 1, diameter, diameter);
+                if region.is_null() {
+                    return Err("Could not shape the preview window".into());
+                }
+                if SetWindowRgn(parent.0, region, 1) == 0 {
+                    DeleteObject(region);
+                    return Err("Could not apply the preview corners".into());
+                }
+                Ok(())
+            })();
+            let _ = sender.try_send(result);
+        })
+        .map_err(|error| error.to_string())?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+        .await
+        .map_err(|_| "Preview styling timed out".to_string())?
+        .ok_or_else(|| "Preview styling was cancelled".to_string())?
 }
 #[cfg(windows)]
 pub(crate) async fn emulate_mobile(

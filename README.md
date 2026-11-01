@@ -8,13 +8,14 @@ A desktop tool for previewing websites in a mobile viewport.
 
 - Fixed 393 × 852 and 852 × 393 viewports, scaled to fit the window.
 - Rotation preserves the window position, navigation history, and page state.
-- Address bar, page history, reload, and navigation controls.
+- Persistent address bar, grouped navigation controls, and viewport size and display scale.
 - Mobile viewport, touch input, and 3× pixel density on Windows.
 - Local development URLs, including loopback and private network addresses.
-- Loading indicators and recoverable error messages.
+- Loading progress and recoverable errors in a fixed status area that keeps the preview still.
 - Stop controls for slow loads and navigation events scoped to the current page.
-- Five recent URLs, stored locally, with a Clear control.
-- PNG screenshot export to `Pictures/PEW` in the desktop app.
+- Five recent URLs in an address-bar dropdown, stored locally, with a Clear control.
+- PNG screenshot export to `Pictures/PEW`, with an Open folder action in the desktop app.
+- Matte device frame with rounded display corners in portrait and landscape.
 
 ## Development
 
@@ -27,9 +28,11 @@ pnpm tauri dev
 
 Enter a URL and press Enter to open it. Edit the address bar to navigate to another page. Escape restores the current address. Home returns to the start screen with the last URL selected.
 
+Use Ctrl+L to select the address, Ctrl+R or F5 to reload, and Alt+Left / Alt+Right to move through page history. These shortcuts work inside the website in the Windows app. Press Down in the address field to open recent URLs, use the arrow keys to select an entry, and press Escape to close the list. Opening the list keeps the current page and its contents intact.
+
 Stop cancels the current load. A load that exceeds 20 seconds is stopped automatically. Home closes the preview, including any pending navigation.
 
-Recent URLs exclude addresses with embedded credentials. Query strings and fragments are omitted from saved history. Use Clear on the start screen to remove recent URLs.
+Recent URLs exclude addresses with embedded credentials. Query strings and fragments are omitted from saved history. Use Clear in the address-bar dropdown to remove recent URLs.
 
 Addresses default to HTTPS. Localhost, loopback, and private network addresses default to HTTP unless a scheme is provided.
 
@@ -57,7 +60,7 @@ Install the test browser once before running integration tests:
 pnpm exec playwright install chromium
 ```
 
-`pnpm test` includes URL, history, navigation-state, and browser integration tests. To include native desktop tests on Windows, build the debug executable and set `PEW_NATIVE_TEST=1` before running the tests. The native suite checks exact viewport sizes, history, cancellation, rotation, and PNG export; exported test files are removed afterward.
+`pnpm test` includes URL, history, navigation-state, and browser integration tests, including keyboard navigation, recent URLs, and stable error layouts. To include native desktop tests on Windows, build the debug executable and set `PEW_NATIVE_TEST=1` before running the tests. The native suite checks exact viewport sizes, history, cancellation, rotation, and PNG export; exported test files are removed afterward. `cargo test --locked --manifest-path src-tauri/Cargo.toml` also checks native shortcut mappings.
 
 Release-mode integration tests use the `test-driver` feature to configure a loopback-only debugger. The published installer is rebuilt without that feature.
 

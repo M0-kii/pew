@@ -46,14 +46,13 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
     } catch (error) {
       const state = await page.evaluate(() => ({
         phase: document.querySelector('#site-viewport').dataset.state,
-        error: document.querySelector('#input-error').textContent,
         notice: document.querySelector('#notice-text').textContent,
       }));
       throw new Error(`Preview did not become ready: ${JSON.stringify(state)}`, { cause: error });
     }
   };
   const open = async (page, url) => {
-    const input = (await page.locator('#url-input').isVisible()) ? '#url-input' : '#address-input';
+    const input = '#address-input';
     await page.locator(input).fill(url);
     await page.locator(input).press('Enter');
   };
@@ -75,11 +74,16 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
     assert.match(await page.title(), /PEW/);
     assert.equal(await page.locator('h1').textContent(), 'Open a website');
     assert.equal(await page.locator('vite-error-overlay').count(), 0);
+    assert.equal(
+      await page.locator('#address-input').evaluate((input) => input === document.activeElement),
+      true,
+    );
     await page.screenshot({ path: path.join(output, 'portrait.png') });
 
     await t.test('fixed viewport, visible validation, and recent URL persistence', async () => {
       await open(page, 'javascript:alert(1)');
-      await page.locator('#input-error').waitFor({ state: 'visible' });
+      await page.locator('#notice').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#address-input').getAttribute('aria-invalid'), 'true');
       await open(page, `${fixtureUrl}/first?token=secret#private`);
       await ready(page);
       assert.deepEqual(
@@ -89,8 +93,11 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
           .evaluate(() => [innerWidth, innerHeight]),
         [393, 852],
       );
+      const beforeError = await page.locator('#site-viewport').boundingBox();
       await open(page, 'invalid address');
       await page.locator('#notice').waitFor({ state: 'visible' });
+      assert.deepEqual(await page.locator('#site-viewport').boundingBox(), beforeError);
+      assert.equal(await page.frameLocator('iframe').locator('h1').textContent(), 'First page');
       assert.deepEqual(
         await page
           .frameLocator('iframe')
@@ -100,13 +107,65 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
       );
       await page.locator('#home-button').click();
       assert.equal(
-        await page.locator('#recent-list button').first().textContent(),
+        await page.locator('#address-input').inputValue(),
+        `${fixtureUrl}/first?token=secret#private`,
+      );
+      assert.equal(await page.locator('#address-input').getAttribute('aria-invalid'), null);
+      await page.locator('#recent-button').click();
+      assert.equal(
+        await page.locator('#recent-list button').first().getAttribute('aria-label'),
         `${fixtureUrl}/first`,
       );
       await page.reload();
+      await page.locator('#recent-button').click();
       await page.locator('#recent-list button').first().click();
       await ready(page);
       assert.equal(await page.locator('#address-input').inputValue(), `${fixtureUrl}/first`);
+    });
+
+    await t.test('address shortcuts and recent URLs keep the current page intact', async () => {
+      await page.frameLocator('iframe').getByRole('textbox').fill('still here');
+      await page.locator('#recent-button').click();
+      assert.equal(await page.locator('#recent-button').getAttribute('aria-expanded'), 'true');
+      assert.equal(
+        await page.frameLocator('iframe').getByRole('textbox').inputValue(),
+        'still here',
+      );
+      assert.deepEqual(
+        await page
+          .frameLocator('iframe')
+          .locator('body')
+          .evaluate(() => [innerWidth, innerHeight]),
+        [393, 852],
+      );
+      await page.keyboard.press('Escape');
+      assert.equal(await page.locator('#recent-section').isHidden(), true);
+      await page.keyboard.press('Control+l');
+      assert.equal(
+        await page
+          .locator('#address-input')
+          .evaluate(
+            (input) =>
+              input === document.activeElement &&
+              input.selectionEnd === input.value.length &&
+              input.selectionStart === 0,
+          ),
+        true,
+      );
+      await page.locator('#address-input').press('ArrowDown');
+      assert.equal(
+        await page
+          .locator('#recent-list button')
+          .first()
+          .evaluate((button) => button === document.activeElement),
+        true,
+      );
+      await page.keyboard.press('Escape');
+      assert.equal(await page.locator('#recent-section').isHidden(), true);
+      await page.locator('#recent-button').click();
+      await page.locator('#recent-list button').first().click();
+      await ready(page);
+      assert.equal(await page.locator('#recent-section').isHidden(), true);
     });
 
     await t.test('Stop and Home cancel pending loads without stale updates', async () => {
@@ -134,8 +193,10 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
       );
       await page.screenshot({ path: path.join(output, 'landscape.png') });
       await page.locator('#home-button').click();
+      await page.locator('#recent-button').click();
       await page.locator('#clear-recent').click();
-      assert.equal(await page.locator('#recent-section').isHidden(), true);
+      assert.equal(await page.locator('#recent-empty').isVisible(), true);
+      await page.locator('#recent-button').click();
     });
 
     await t.test('a timed-out page restores controls', async () => {
@@ -144,8 +205,64 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
       await page.clock.fastForward(20_001);
       await page.locator('#notice').waitFor({ state: 'visible' });
       assert.match(await page.locator('#notice-text').textContent(), /too long to load/);
-      assert.equal(await page.locator('#url-input').isVisible(), true);
+      assert.equal(await page.locator('#address-input').isVisible(), true);
+      assert.equal(await page.locator('#notice-action').textContent(), 'Retry');
       finishDelayed();
+      await page.locator('#notice-action').click();
+      await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.locator('#home-button').click();
+      finishDelayed();
+    });
+
+    await t.test('controls and recent URLs fit the smallest supported window', async () => {
+      const small = await browser.newPage({
+        viewport: { width: 380, height: 400 },
+        reducedMotion: 'reduce',
+      });
+      watch(small);
+      try {
+        await small.goto('http://127.0.0.1:1420');
+        await small.evaluate(() =>
+          localStorage.setItem(
+            'pew.recent-urls',
+            JSON.stringify(
+              Array.from({ length: 5 }, (_, index) => `https://example.com/project/${index}`),
+            ),
+          ),
+        );
+        await small.reload();
+        await small.locator('#recent-button').click();
+        const toolbar = await small.locator('.toolbar').boundingBox();
+        for (const id of [
+          'back',
+          'forward',
+          'home',
+          'reload',
+          'rotate',
+          'screenshot',
+          'minimize',
+          'close',
+        ]) {
+          const button = await small.locator(`#${id}-button`).boundingBox();
+          assert.ok(button.x >= toolbar.x && button.x + button.width <= toolbar.x + toolbar.width);
+        }
+        const frame = await small.locator('.phone').boundingBox();
+        assert.ok(frame.y >= toolbar.y + toolbar.height, 'Device does not overlap the toolbar');
+        assert.ok(frame.y + frame.height <= 400, 'Device fits below the expanded recent URLs');
+        assert.equal(await small.locator('#recent-list button').count(), 5);
+        await small.locator('#recent-list button').last().focus();
+        await small.keyboard.press('ArrowDown');
+        assert.equal(
+          await small
+            .locator('#recent-list button')
+            .first()
+            .evaluate((button) => button === document.activeElement),
+          true,
+        );
+        await small.screenshot({ path: path.join(output, 'small-recent.png') });
+      } finally {
+        await small.close();
+      }
     });
 
     if (process.env.PEW_NATIVE_TEST === '1') {
@@ -216,7 +333,7 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
       assert.ok(main, 'Main desktop view is available');
       nativeMain = main;
       watch(main);
-      await main.locator('#url-input').waitFor({ state: 'visible' });
+      await main.locator('#address-input').waitFor({ state: 'visible' });
       savedHistory = await main.evaluate(() => localStorage.getItem('pew.recent-urls'));
 
       await t.test('native viewport, history, rotation, and page state', async () => {
@@ -248,6 +365,12 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
         await main.locator('#forward-button').click();
         await ready(main);
         await site.getByRole('textbox').fill('keep this value');
+        await main.locator('#recent-button').click();
+        assert.equal(await main.locator('#recent-section').isVisible(), true);
+        assert.equal(await site.getByRole('textbox').inputValue(), 'keep this value');
+        assert.deepEqual(await site.evaluate(() => [innerWidth, innerHeight]), [393, 852]);
+        await main.locator('#recent-button').click();
+        await main.screenshot({ path: path.join(output, 'native-portrait.png') });
         const position = await main.evaluate(async () => {
           return window.__TAURI_INTERNALS__.invoke('plugin:window|outer_position', {
             label: 'main',
@@ -267,6 +390,7 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
           });
         });
         assert.deepEqual(after, position);
+        await main.screenshot({ path: path.join(output, 'native-landscape.png') });
       });
 
       await t.test('navigation during rotation retains the loading state', async () => {
@@ -293,13 +417,15 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
       });
 
       await t.test('native PNG export, cancellation, and failure recovery', async () => {
+        const beforeExport = await main.locator('#site-viewport').boundingBox();
         await main.locator('#screenshot-button').click();
-        await main.waitForFunction(() =>
-          document.querySelector('#notice-text').textContent.startsWith('Screenshot saved: '),
+        await main.waitForFunction(
+          () => document.querySelector('#notice').dataset.kind === 'success',
         );
-        const file = (await main.locator('#notice-text').textContent()).slice(
-          'Screenshot saved: '.length,
-        );
+        assert.equal(await main.locator('#notice-text').getAttribute('role'), 'status');
+        assert.equal(await main.locator('#notice-action').textContent(), 'Open folder');
+        assert.deepEqual(await main.locator('#site-viewport').boundingBox(), beforeExport);
+        const file = await main.locator('#notice-action').getAttribute('title');
         assert.equal(path.basename(path.dirname(file)), 'PEW');
         assert.match(path.basename(file), /^pew-\d+\.png$/);
         const data = await readFile(file);

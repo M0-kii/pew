@@ -1,166 +1,192 @@
 <div class="shell">
   <header class="toolbar" aria-label="PEW controls">
-    <div id="drag-handle" class="drag-handle" data-tauri-drag-region title="Drag PEW">
-      <span class="toolbar-brand" data-tauri-drag-region>PEW.</span>
+    <div class="toolbar-controls">
+      <div id="drag-handle" class="drag-handle" data-tauri-drag-region title="Drag PEW">
+        <span class="toolbar-brand" data-tauri-drag-region>PEW<span>.</span></span>
+      </div>
+      <nav class="navigation control-group" aria-label="Page navigation">
+        <button
+          id="back-button"
+          class="tool-button"
+          type="button"
+          aria-label="Go back"
+          title="Back · Alt+Left"
+          disabled
+        >
+          <i data-lucide="arrow-left" aria-hidden="true"></i>
+        </button>
+        <button
+          id="forward-button"
+          class="tool-button"
+          type="button"
+          aria-label="Go forward"
+          title="Forward · Alt+Right"
+          disabled
+        >
+          <i data-lucide="arrow-right" aria-hidden="true"></i>
+        </button>
+        <button
+          id="home-button"
+          class="tool-button"
+          type="button"
+          aria-label="Go to start screen"
+          title="Start screen"
+          disabled
+        >
+          <i data-lucide="house" aria-hidden="true"></i>
+        </button>
+        <button
+          id="reload-button"
+          class="tool-button"
+          type="button"
+          aria-label="Reload"
+          title="Reload · Ctrl+R"
+          disabled
+        >
+          <i data-lucide="refresh-cw" aria-hidden="true"></i>
+        </button>
+        <button
+          id="stop-button"
+          class="tool-button"
+          type="button"
+          aria-label="Stop loading"
+          title="Stop loading · Esc"
+          hidden
+        >
+          <i data-lucide="square" aria-hidden="true"></i>
+        </button>
+      </nav>
+      <div class="device-tools control-group" role="group" aria-label="Preview tools">
+        <button
+          id="rotate-button"
+          class="tool-button"
+          type="button"
+          aria-label="Rotate to landscape"
+          title="Rotate to landscape"
+          aria-pressed="false"
+        >
+          <i data-lucide="rotate-cw-square" aria-hidden="true"></i>
+        </button>
+        <button
+          id="screenshot-button"
+          class="tool-button"
+          type="button"
+          aria-label="Save screenshot"
+          title="Save screenshot"
+          disabled
+        >
+          <i data-lucide="camera" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="window-actions control-group" role="group" aria-label="Window controls">
+        <button
+          id="minimize-button"
+          class="window-button"
+          type="button"
+          aria-label="Minimize"
+          title="Minimize"
+        >
+          <i data-lucide="minus" aria-hidden="true"></i>
+        </button>
+        <button
+          id="close-button"
+          class="window-button close-button"
+          type="button"
+          aria-label="Close"
+          title="Close"
+        >
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
     </div>
-    <nav class="navigation" aria-label="Page navigation">
-      <button
-        id="back-button"
-        class="tool-button"
-        type="button"
-        aria-label="Go back"
-        title="Back"
-        disabled
-      >
-        <i data-lucide="arrow-left" aria-hidden="true"></i>
-      </button>
-      <button
-        id="forward-button"
-        class="tool-button"
-        type="button"
-        aria-label="Go forward"
-        title="Forward"
-        disabled
-      >
-        <i data-lucide="arrow-right" aria-hidden="true"></i>
-      </button>
-      <button
-        id="home-button"
-        class="tool-button"
-        type="button"
-        aria-label="Home"
-        title="Home"
-        disabled
-      >
-        <i data-lucide="house" aria-hidden="true"></i>
-      </button>
-      <button
-        id="reload-button"
-        class="tool-button"
-        type="button"
-        aria-label="Reload"
-        title="Reload"
-        disabled
-      >
-        <i data-lucide="refresh-cw" aria-hidden="true"></i>
-      </button>
-      <button
-        id="stop-button"
-        class="tool-button"
-        type="button"
-        aria-label="Stop loading"
-        title="Stop loading"
-        hidden
-      >
-        <i data-lucide="square" aria-hidden="true"></i>
-      </button>
-      <button
-        id="rotate-button"
-        class="tool-button"
-        type="button"
-        aria-label="Rotate to landscape"
-        title="Rotate to landscape"
-        aria-pressed="false"
-      >
-        <i data-lucide="rotate-3d" aria-hidden="true"></i>
-      </button>
-      <button
-        id="screenshot-button"
-        class="tool-button"
-        type="button"
-        aria-label="Save screenshot"
-        title="Save screenshot"
-        disabled
-      >
-        <i data-lucide="camera" aria-hidden="true"></i>
-      </button>
-    </nav>
-    <div class="window-actions" aria-label="Window controls">
-      <button
-        id="minimize-button"
-        class="window-button"
-        type="button"
-        aria-label="Minimize"
-        title="Minimize"
-      >
-        <i data-lucide="minus" aria-hidden="true"></i>
-      </button>
-      <button
-        id="close-button"
-        class="window-button close-button"
-        type="button"
-        aria-label="Close"
-        title="Close"
-      >
-        <i data-lucide="x" aria-hidden="true"></i>
-      </button>
-    </div>
-    <form id="address-form" class="address-bar" autocomplete="off" hidden>
-      <span id="viewport-size" class="address-status"></span>
-      <span id="address-status" class="address-status" role="status" aria-live="polite">Ready</span>
+    <form id="address-form" class="address-bar" autocomplete="off">
+      <i data-lucide="globe" class="address-icon" aria-hidden="true"></i>
       <input
         id="address-input"
         type="text"
         inputmode="url"
         spellcheck="false"
         autocapitalize="off"
-        aria-label="Current website URL"
-        placeholder="Enter a website URL"
+        aria-label="Website URL"
+        aria-describedby="address-status"
+        placeholder="Website or localhost:3000"
+        autofocus
       />
-      <button id="address-go" type="submit" aria-label="Open website" title="Open website">
+      <button
+        id="recent-button"
+        class="recent-toggle"
+        type="button"
+        aria-label="Recent URLs"
+        aria-expanded="false"
+        aria-controls="recent-section"
+        title="Recent URLs"
+      >
+        <i data-lucide="chevron-down" aria-hidden="true"></i>
+      </button>
+      <button
+        id="address-go"
+        class="address-go"
+        type="submit"
+        aria-label="Open website"
+        title="Open website · Enter"
+      >
         <i data-lucide="arrow-right" aria-hidden="true"></i>
       </button>
     </form>
-    <div id="notice" class="notice" role="alert" hidden>
-      <span id="notice-text"></span>
-      <button id="dismiss-notice" type="button" aria-label="Dismiss message">
-        <i data-lucide="x" aria-hidden="true"></i>
-      </button>
+    <section id="recent-section" class="recent-section" aria-label="Recent URLs" hidden>
+      <div class="recent-heading">
+        <span>Recent URLs</span><button id="clear-recent" type="button">Clear</button>
+      </div>
+      <ul id="recent-list"></ul>
+      <p id="recent-empty">Websites you open will appear here.</p>
+    </section>
+    <div class="status-row">
+      <div id="preview-status" class="preview-status">
+        <span id="address-status" class="address-status" role="status" aria-live="polite"
+          >Mobile preview</span
+        >
+        <span
+          id="viewport-size"
+          class="viewport-size"
+          title="Logical viewport size and display scale"
+        ></span>
+      </div>
+      <div id="notice" class="notice" data-kind="error" hidden>
+        <span id="notice-text" role="alert"></span>
+        <button id="notice-action" class="notice-action" type="button" hidden></button>
+        <button
+          id="dismiss-notice"
+          class="dismiss-notice"
+          type="button"
+          aria-label="Dismiss message"
+          title="Dismiss message"
+        >
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
     </div>
+    <div class="load-progress" aria-hidden="true"><span></span></div>
   </header>
-
   <div class="device-stage">
     <div class="device-scale">
       <main class="phone" aria-label="Phone preview">
-        <div class="phone-island" aria-hidden="true"></div>
-        <span class="phone-side-button phone-side-button--action" aria-hidden="true"></span>
+        <div class="phone-speaker" aria-hidden="true"></div>
         <span class="phone-side-button phone-side-button--volume-up" aria-hidden="true"></span>
         <span class="phone-side-button phone-side-button--volume-down" aria-hidden="true"></span>
         <span class="phone-side-button phone-side-button--power" aria-hidden="true"></span>
         <div id="site-viewport" class="site-viewport">
           <div id="empty-state" class="empty-state">
             <div class="welcome">
-              <p class="welcome-eyebrow">WEB PREVIEW</p>
+              <div class="welcome-mark" aria-hidden="true"><i data-lucide="smartphone"></i></div>
               <h1>Open a website</h1>
-              <p class="welcome-description">Enter a URL or local development address.</p>
-              <form id="url-form" class="url-form" autocomplete="off">
-                <input
-                  id="url-input"
-                  type="text"
-                  inputmode="url"
-                  spellcheck="false"
-                  autocapitalize="off"
-                  autocomplete="url"
-                  aria-label="Website URL"
-                  placeholder="example.com or localhost:3000"
-                  aria-describedby="input-error"
-                />
-                <button type="submit" aria-label="Open website" title="Open website">
-                  <i data-lucide="arrow-right" aria-hidden="true"></i>
-                </button>
-              </form>
-              <p id="input-error" class="input-error" role="alert" hidden></p>
-              <p class="welcome-hint">Enter to open <span aria-hidden="true">↵</span></p>
-              <section id="recent-section" class="recent-section" aria-label="Recent URLs" hidden>
-                <div class="recent-heading">
-                  <span>Recent URLs</span><button id="clear-recent" type="button">Clear</button>
-                </div>
-                <ul id="recent-list"></ul>
-              </section>
+              <p>Enter a website or local project in the address bar above.</p>
+              <button id="focus-address" class="welcome-action" type="button">
+                Enter an address <kbd>Ctrl L</kbd>
+              </button>
             </div>
           </div>
           <div id="loading-state" class="loading-state" hidden>
-            <span class="loading-spinner"></span><span>Opening website…</span>
+            <span class="loading-spinner" aria-hidden="true"></span><span>Opening website…</span>
           </div>
         </div>
         <div class="phone-home-indicator" aria-hidden="true"></div>
