@@ -59,6 +59,8 @@ pnpm exec playwright install chromium
 
 `pnpm test` includes URL, history, navigation-state, and browser integration tests. To include native desktop tests on Windows, build the debug executable and set `PEW_NATIVE_TEST=1` before running the tests. The native suite checks exact viewport sizes, history, cancellation, rotation, and PNG export; exported test files are removed afterward.
 
+Release-mode integration tests use the `test-driver` feature to configure a loopback-only debugger. The published installer is rebuilt without that feature.
+
 ## Releases
 
 Checks run for pushes and pull requests. To publish a release, update the version in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`, update the lockfiles, then push a matching `vX.Y.Z` tag. The release workflow runs the full Windows test suite before building and publishing the installer and checksum.

@@ -21,7 +21,7 @@ interface SiteConfiguration extends ViewportSize {
 }
 
 export const nativeBrowser = {
-  prepare: () => invoke<void>('configure_interface'),
+  prepare: () => invoke<string | null>('configure_interface'),
   navigate: (url: string) => invoke<void>('navigate_site', { url }),
   configure: (options: SiteConfiguration) => invoke<void>('configure_site', { options }),
   action: (action: NavigationAction) => invoke<void>('site_action', { action }),

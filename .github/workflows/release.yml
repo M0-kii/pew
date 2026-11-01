@@ -29,6 +29,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           workspaces: src-tauri
+          shared-key: windows
           cache-on-failure: true
       - name: Verify version
         env:
@@ -36,7 +37,7 @@ jobs:
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
           if ($env:RELEASE_TAG -ne "v$version") { throw 'Tag does not match the application version' }
-      - run: node node_modules/@tauri-apps/cli/tauri.js build --ci --bundles nsis -- --locked
+      - run: node node_modules/@tauri-apps/cli/tauri.js build --ci --no-bundle --features test-driver -- --locked
       - run: pnpm exec playwright install chromium
       - name: Install desktop browser runtime
         run: ./.github/scripts/install-runtime.ps1
@@ -45,6 +46,8 @@ jobs:
         env:
           PEW_NATIVE_TEST: '1'
           PEW_NATIVE_EXECUTABLE: src-tauri/target/release/pew.exe
+      - name: Build production installer without the test driver
+        run: node node_modules/@tauri-apps/cli/tauri.js build --ci --bundles nsis -- --locked
       - name: Publish installer and checksum
         env:
           GH_TOKEN: ${{ github.token }}

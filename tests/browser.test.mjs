@@ -165,6 +165,7 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
             ...process.env,
             WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort} --disable-gpu --no-sandbox`,
             WEBVIEW2_USER_DATA_FOLDER: profile,
+            PEW_TEST_DEBUG_PORT: String(debugPort),
           },
         },
       );
@@ -280,6 +281,8 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
         await rotating;
         await main.waitForFunction(
           () => document.querySelector('#site-viewport').dataset.state === 'loading',
+          undefined,
+          { timeout: 5_000 },
         );
         assert.equal(await main.locator('#rotate-button').isDisabled(), true);
         await main.locator('#stop-button').click();

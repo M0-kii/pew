@@ -9,6 +9,9 @@ edition = "2021"
 name = "pew_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+test-driver = ["tauri/devtools"]
+
 [build-dependencies]
 tauri-build = { version = "2.5.5", features = [] }
 

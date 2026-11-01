@@ -35,11 +35,12 @@ pub(crate) fn site(app: &AppHandle, caller: &Webview) -> Result<Webview, String>
 }
 
 #[tauri::command]
-pub(crate) async fn configure_interface(caller: Webview) -> Result<(), String> {
+pub(crate) async fn configure_interface(caller: Webview) -> Result<Option<String>, String> {
     if caller.label() != MAIN_WEBVIEW {
         return Err("This command is only available to the PEW interface".into());
     }
-    disable_browser_shortcuts(&caller).await
+    disable_browser_shortcuts(&caller).await?;
+    Ok(crate::test_browser_args())
 }
 
 #[tauri::command]

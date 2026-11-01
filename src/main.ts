@@ -66,6 +66,7 @@ let loadTimer: ReturnType<typeof setTimeout> | undefined;
 let syncTask = Promise.resolve();
 let lastBounds = '';
 let refreshing = false;
+let browserArguments: string | undefined;
 let rotationResume: ViewState = 'empty';
 
 function setPhase(value: ViewState): void {
@@ -170,7 +171,6 @@ function syncLayout(force = false): Promise<void> {
   const box = bounds();
   const key = JSON.stringify([box, orientation]);
   if (!force && key === lastBounds) return syncTask;
-  lastBounds = key;
   const landscape = orientation === 'landscape';
   syncTask = syncTask
     .catch(() => {})
@@ -179,7 +179,14 @@ function syncLayout(force = false): Promise<void> {
       try {
         await view.setPosition(new LogicalPosition(box.x, box.y));
         await view.setSize(new LogicalSize(box.width, box.height));
-        await nativeBrowser.resize(size, landscape, box.width / size.width);
+        if (
+          phase !== 'loading' &&
+          phase !== 'opening' &&
+          !(phase === 'rotating' && rotationResume === 'loading')
+        ) {
+          await nativeBrowser.resize(size, landscape, box.width / size.width);
+          lastBounds = key;
+        }
       } catch (error) {
         if (view === siteWebview && phase !== 'closing') throw error;
       }
@@ -272,7 +279,12 @@ async function openUrl(raw: string): Promise<void> {
       if (version !== epoch) return;
       if (!siteWebview) {
         await syncLayout();
-        const view = new Webview(getCurrentWindow(), 'site', { url: 'about:blank', ...bounds() });
+        const view = new Webview(getCurrentWindow(), 'site', {
+          ...(browserArguments ? { additionalBrowserArgs: browserArguments } : {}),
+          ...(browserArguments ? { devtools: true } : {}),
+          url: 'about:blank',
+          ...bounds(),
+        });
         created = view;
         await waitForWebview(view);
         if (version !== epoch) {
@@ -404,12 +416,7 @@ async function rotatePhone(): Promise<void> {
   const next = previous === 'portrait' ? 'landscape' : 'portrait';
   rotationResume = phase;
   setPhase('rotating');
-  let hidden = false;
   try {
-    if (siteWebview) {
-      await siteWebview.hide();
-      hidden = true;
-    }
     await resizeWindow(appWindow, next);
     orientation = next;
     phone.dataset.orientation = next;
@@ -441,13 +448,6 @@ async function rotatePhone(): Promise<void> {
     }
     showNotice(`Could not rotate the preview: ${String(error)}`);
   } finally {
-    if (hidden && siteWebview) {
-      try {
-        await siteWebview.show();
-      } catch (error) {
-        showNotice(String(error));
-      }
-    }
     setPhase(rotationResume);
   }
 }
@@ -475,8 +475,9 @@ async function refreshSiteState(): Promise<void> {
 }
 
 const siteEventsReady = isTauri()
-  ? nativeBrowser.prepare().then(() =>
-      getCurrentWebview().listen<NavigationEvent>('pew:navigation', ({ payload }) => {
+  ? nativeBrowser.prepare().then((arguments_) => {
+      browserArguments = arguments_ ?? undefined;
+      return getCurrentWebview().listen<NavigationEvent>('pew:navigation', ({ payload }) => {
         if (!siteWebview || phase === 'closing' || !navigation.accept(payload)) return;
         if (stopping) {
           navigation.cancel();
@@ -491,8 +492,8 @@ const siteEventsReady = isTauri()
             if (payload.phase === 'finished') rememberCurrent();
           });
         }
-      }),
-    )
+      });
+    })
   : Promise.resolve(() => {});
 void siteEventsReady.catch(() => {});
 
