@@ -11,6 +11,7 @@ export interface SiteState {
 interface ViewportSize {
   width: number;
   height: number;
+  pixelRatio: number;
 }
 
 interface SiteConfiguration extends ViewportSize {
@@ -25,8 +26,8 @@ export const nativeBrowser = {
   navigate: (url: string) => invoke<void>('navigate_site', { url }),
   configure: (options: SiteConfiguration) => invoke<void>('configure_site', { options }),
   action: (action: NavigationAction) => invoke<void>('site_action', { action }),
-  resize: ({ width, height }: ViewportSize, landscape: boolean, scale: number) =>
-    invoke<void>('resize_site', { width, height, landscape, scale }),
+  resize: ({ width, height, pixelRatio }: ViewportSize, landscape: boolean, scale: number) =>
+    invoke<void>('resize_site', { width, height, pixelRatio, landscape, scale }),
   snapshot: () => invoke<string>('site_snapshot'),
   exportSnapshot: () => invoke<string>('export_snapshot'),
   openScreenshotFolder: () => invoke<void>('open_screenshot_folder'),

@@ -86,6 +86,10 @@ svg {
   padding-left: 3px;
   cursor: grab;
   user-select: none;
+  gap: 6px;
+}
+.toolbar-logo {
+  flex: 0 0 auto;
 }
 .drag-handle:active {
   cursor: grabbing;
@@ -267,6 +271,114 @@ svg {
 .viewport-size {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 5px;
+}
+.viewport-size::after {
+  content: '⌄';
+  margin-left: 5px;
+}
+.viewport-size:hover,
+.viewport-size[aria-expanded='true'] {
+  background: #e9edf2;
+  color: #2f4c6a;
+}
+.viewport-size:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.viewport-panel {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  max-height: calc(100dvh - 190px);
+  overflow-y: auto;
+}
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.panel-heading button {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+}
+.panel-heading button:hover {
+  background: #edf0f3;
+}
+.preset-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.viewport-panel select,
+.viewport-panel input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 4px 7px;
+  border: 1px solid #d8dce1;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+}
+.viewport-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+.viewport-fields label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.viewport-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+}
+.viewport-actions button {
+  min-height: 31px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: #edf0f3;
+  color: var(--ink);
+  font-size: 12px;
+}
+#apply-viewport {
+  background: #292e35;
+  color: #fff;
+}
+.viewport-actions button:hover {
+  filter: brightness(0.94);
+}
+.viewport-error {
+  margin: 9px 0 0;
+  color: #943f32;
+  font-size: 11px;
+  line-height: 1.4;
 }
 .notice {
   display: flex;
@@ -699,7 +811,8 @@ kbd {
     grid-column: 2;
     grid-row: 1;
   }
-  .recent-section {
+  .recent-section,
+  .viewport-panel {
     grid-column: 1 / -1;
     grid-row: 2;
   }

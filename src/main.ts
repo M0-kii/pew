@@ -20,7 +20,15 @@ import {
 import './style.css';
 import ui from './ui.html?raw';
 import { formatUrl } from './url';
-import { TIMING, VIEWPORT_SIZE, type Orientation, type ViewState } from './config';
+import { TIMING, type Orientation, type ViewState } from './config';
+import {
+  DEFAULT_VIEWPORT,
+  VIEWPORT_PRESETS,
+  VIEWPORT_KEY,
+  savedViewport,
+  validateViewport,
+  type ViewportSettings,
+} from './viewport';
 import { requireElement } from './dom';
 import { nativeBrowser, mobileUserAgent, type NavigationAction } from './native';
 import { resizeWindow } from './rotation';
@@ -61,6 +69,13 @@ const noticeAction = requireElement<HTMLButtonElement>('#notice-action');
 const previewStatus = requireElement<HTMLDivElement>('#preview-status');
 const recentButton = requireElement<HTMLButtonElement>('#recent-button');
 const recentSection = requireElement<HTMLElement>('#recent-section');
+const viewportButton = requireElement<HTMLButtonElement>('#viewport-size');
+const viewportPanel = requireElement<HTMLFormElement>('#viewport-panel');
+const viewportPreset = requireElement<HTMLSelectElement>('#viewport-preset');
+const viewportWidth = requireElement<HTMLInputElement>('#viewport-width');
+const viewportHeight = requireElement<HTMLInputElement>('#viewport-height');
+const viewportDensity = requireElement<HTMLSelectElement>('#viewport-density');
+const viewportError = requireElement<HTMLParagraphElement>('#viewport-error');
 const buttons = Object.fromEntries(
   ['back', 'forward', 'home', 'reload', 'stop', 'rotate', 'screenshot'].map((name) => [
     name,
@@ -72,7 +87,14 @@ const navigation = new NavigationTracker();
 let siteWebview: Webview | null = null;
 let browserFrame: HTMLIFrameElement | null = null;
 let phase: ViewState = 'empty';
-let orientation: Orientation = 'portrait';
+let viewportSettings = { ...DEFAULT_VIEWPORT };
+try {
+  viewportSettings = savedViewport(localStorage);
+} catch {
+  /* Storage may be disabled. */
+}
+let orientation: Orientation =
+  viewportSettings.width > viewportSettings.height ? 'landscape' : 'portrait';
 let activeUrl = '';
 let epoch = 0;
 let session = 0;
@@ -117,6 +139,7 @@ function setPhase(value: ViewState): void {
   addressGo.disabled = busy || value === 'opening';
   addressInput.readOnly = busy;
   recentButton.disabled = busy || value === 'opening';
+  viewportButton.disabled = busy || loading;
   void syncLayout().catch((error: unknown) => showNotice(String(error)));
 }
 
@@ -150,6 +173,7 @@ function showNotice(
 function beginLoading(): void {
   clearTimeout(loadTimer);
   setRecentOpen(false);
+  setViewportOpen(false);
   dismissNotice();
   if (phase === 'rotating') rotationResume = 'loading';
   else setPhase('loading');
@@ -190,11 +214,13 @@ function bounds() {
 }
 
 function syncLayout(force = false): Promise<void> {
-  const size = VIEWPORT_SIZE[orientation];
+  const size = viewportSettings;
   const frame =
-    orientation === 'portrait' ? { width: 411, height: 912 } : { width: 912, height: 411 };
+    orientation === 'portrait'
+      ? { width: size.width + 18, height: size.height + 60 }
+      : { width: size.width + 60, height: size.height + 18 };
   const scale = Math.max(
-    0.1,
+    0.01,
     Math.min(
       1,
       (innerWidth - 30) / frame.width,
@@ -208,12 +234,15 @@ function syncLayout(force = false): Promise<void> {
   deviceScale.style.transform = `scale(${scale})`;
   stage.style.width = `${frame.width * scale}px`;
   stage.style.height = `${frame.height * scale}px`;
-  requireElement<HTMLSpanElement>('#viewport-size').textContent =
-    `${size.width} × ${size.height} · ${Math.round(scale * 100)}%`;
+  viewportButton.textContent = `${size.width} × ${size.height} · ${size.pixelRatio}× · ${Math.round(scale * 100)}%`;
+  viewportButton.setAttribute(
+    'aria-label',
+    `Viewport settings, ${size.width} by ${size.height} pixels, ${size.pixelRatio} times density, ${Math.round(scale * 100)} percent display scale`,
+  );
   if (!siteWebview || (phase === 'rotating' && !force)) return syncTask;
   const view = siteWebview;
   const box = bounds();
-  const key = JSON.stringify([box, orientation]);
+  const key = JSON.stringify([box, orientation, size]);
   if (!force && key === lastBounds) return syncTask;
   const landscape = orientation === 'landscape';
   syncTask = syncTask
@@ -300,9 +329,36 @@ function renderRecent(): void {
 }
 
 function setRecentOpen(open: boolean): void {
+  if (open) setViewportOpen(false);
   recentSection.hidden = !open;
   recentButton.setAttribute('aria-expanded', String(open));
   if (open) renderRecent();
+  void syncLayout().catch((error: unknown) => showNotice(String(error)));
+}
+
+function fillViewportForm(settings: ViewportSettings): void {
+  viewportWidth.value = String(settings.width);
+  viewportHeight.value = String(settings.height);
+  viewportDensity.value = String(settings.pixelRatio);
+  viewportPreset.value = String(
+    VIEWPORT_PRESETS.findIndex(
+      (preset) =>
+        preset.width === settings.width &&
+        preset.height === settings.height &&
+        preset.pixelRatio === settings.pixelRatio,
+    ),
+  );
+  viewportError.hidden = true;
+}
+
+function setViewportOpen(open: boolean): void {
+  viewportPanel.hidden = !open;
+  viewportButton.setAttribute('aria-expanded', String(open));
+  if (open) {
+    recentSection.hidden = true;
+    recentButton.setAttribute('aria-expanded', 'false');
+    fillViewportForm(viewportSettings);
+  }
   void syncLayout().catch((error: unknown) => showNotice(String(error)));
 }
 
@@ -373,7 +429,7 @@ async function openUrl(raw: string): Promise<void> {
         }
         siteWebview = view;
         navigation.reset(++session);
-        const size = VIEWPORT_SIZE[orientation];
+        const size = viewportSettings;
         await nativeBrowser.configure({
           ...size,
           userAgent: mobileUserAgent(),
@@ -494,14 +550,26 @@ async function goHome(): Promise<void> {
 }
 
 async function rotatePhone(): Promise<void> {
+  await applyViewport({
+    ...viewportSettings,
+    width: viewportSettings.height,
+    height: viewportSettings.width,
+  });
+}
+
+async function applyViewport(settings: ViewportSettings): Promise<void> {
   if (phase !== 'empty' && phase !== 'ready') return;
   const previous = orientation;
-  const next = previous === 'portrait' ? 'landscape' : 'portrait';
+  const previousSettings = viewportSettings;
+  const next = settings.width > settings.height ? 'landscape' : 'portrait';
+  setViewportOpen(false);
+  setRecentOpen(false);
   rotationResume = phase;
   setPhase('rotating');
   try {
-    await resizeWindow(appWindow, next);
+    if (next !== previous) await resizeWindow(appWindow, next);
     orientation = next;
+    viewportSettings = settings;
     phone.dataset.orientation = next;
     buttons.rotate.setAttribute('aria-pressed', String(next === 'landscape'));
     buttons.rotate.setAttribute(
@@ -514,8 +582,14 @@ async function rotatePhone(): Promise<void> {
       await phone.animate([{ opacity: 0.5 }, { opacity: 1 }], { duration: TIMING.rotation })
         .finished;
     }
+    try {
+      localStorage.setItem(VIEWPORT_KEY, JSON.stringify(settings));
+    } catch {
+      /* Previewing works without saved settings. */
+    }
   } catch (error) {
     orientation = previous;
+    viewportSettings = previousSettings;
     phone.dataset.orientation = previous;
     buttons.rotate.setAttribute('aria-pressed', String(previous === 'landscape'));
     buttons.rotate.setAttribute(
@@ -524,12 +598,12 @@ async function rotatePhone(): Promise<void> {
     );
     buttons.rotate.title = buttons.rotate.getAttribute('aria-label')!;
     try {
-      await resizeWindow(appWindow, previous);
+      if (next !== previous) await resizeWindow(appWindow, previous);
       await syncLayout(true);
     } catch (restoreError) {
       showNotice(String(restoreError));
     }
-    showNotice(`Could not rotate the preview: ${String(error)}`);
+    showNotice(`Could not update the viewport: ${String(error)}`);
   } finally {
     setPhase(rotationResume);
   }
@@ -639,18 +713,25 @@ recentSection.addEventListener('keydown', (event) => {
 });
 document.addEventListener('pointerdown', (event) => {
   if (!recentSection.hidden && !toolbar.contains(event.target as Node)) setRecentOpen(false);
+  if (!viewportPanel.hidden && !toolbar.contains(event.target as Node)) setViewportOpen(false);
 });
 document.addEventListener('focusin', (event) => {
   if (!recentSection.hidden && !toolbar.contains(event.target as Node)) setRecentOpen(false);
+  if (!viewportPanel.hidden && !toolbar.contains(event.target as Node)) setViewportOpen(false);
 });
 function shortcut(name: string): void {
-  if (name === 'preview-focus') setRecentOpen(false);
-  else if (name === 'address') void focusAddress().catch(reportError);
+  if (name === 'preview-focus') {
+    setRecentOpen(false);
+    setViewportOpen(false);
+  } else if (name === 'address') void focusAddress().catch(reportError);
   else if (name === 'reload' && !buttons.reload.disabled) void action('reload');
   else if (name === 'back' && !buttons.back.disabled) void action('back');
   else if (name === 'forward' && !buttons.forward.disabled) void action('forward');
   else if (name === 'stop') {
-    if (!recentSection.hidden) {
+    if (!viewportPanel.hidden) {
+      setViewportOpen(false);
+      viewportButton.focus();
+    } else if (!recentSection.hidden) {
       setRecentOpen(false);
       recentButton.focus();
     } else if (phase === 'loading' || phase === 'opening') void stopLoading();
@@ -711,5 +792,51 @@ window.addEventListener(
   { once: true },
 );
 renderRecent();
+for (const [index, preset] of VIEWPORT_PRESETS.entries()) {
+  viewportPreset.add(
+    new Option(`${preset.name} · ${preset.width} × ${preset.height}`, String(index)),
+  );
+}
+viewportPreset.add(new Option('Custom viewport', '-1'));
+viewportPreset.addEventListener('change', () => {
+  const preset = VIEWPORT_PRESETS[Number(viewportPreset.value)];
+  if (preset) fillViewportForm(preset);
+  else viewportWidth.focus();
+});
+viewportPanel.addEventListener('input', (event) => {
+  if (event.target === viewportPreset) return;
+  viewportPreset.value = '-1';
+  viewportError.hidden = true;
+});
+viewportPanel.addEventListener('submit', (event) => {
+  event.preventDefault();
+  try {
+    const settings = validateViewport(
+      viewportWidth.valueAsNumber,
+      viewportHeight.valueAsNumber,
+      Number(viewportDensity.value),
+    );
+    void applyViewport(settings);
+  } catch (error) {
+    viewportError.textContent = error instanceof Error ? error.message : String(error);
+    viewportError.hidden = false;
+  }
+});
+viewportButton.addEventListener('click', () => setViewportOpen(viewportPanel.hidden));
+requireElement<HTMLButtonElement>('#close-viewport').addEventListener('click', () => {
+  setViewportOpen(false);
+  viewportButton.focus();
+});
+requireElement<HTMLButtonElement>('#reset-viewport').addEventListener('click', () =>
+  fillViewportForm(DEFAULT_VIEWPORT),
+);
+phone.dataset.orientation = orientation;
+buttons.rotate.setAttribute('aria-pressed', String(orientation === 'landscape'));
+buttons.rotate.setAttribute(
+  'aria-label',
+  orientation === 'landscape' ? 'Rotate to portrait' : 'Rotate to landscape',
+);
+buttons.rotate.title = buttons.rotate.getAttribute('aria-label')!;
 setPhase('empty');
+if (orientation === 'landscape') void resizeWindow(appWindow, orientation).catch(reportError);
 void focusAddress().catch(reportError);

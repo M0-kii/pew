@@ -265,6 +265,70 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
       }
     });
 
+    await t.test('custom viewports preserve the page, rotate, validate, and persist', async () => {
+      const responsive = await browser.newPage({
+        viewport: { width: 430, height: 900 },
+        reducedMotion: 'reduce',
+      });
+      watch(responsive);
+      try {
+        await responsive.goto('http://127.0.0.1:1420');
+        await open(responsive, `${fixtureUrl}/first`);
+        await ready(responsive);
+        await responsive.frameLocator('iframe').getByRole('textbox').fill('keep this page');
+        await responsive.locator('#viewport-size').click();
+        await responsive.locator('#viewport-width').fill('239');
+        await responsive.locator('#apply-viewport').click();
+        await responsive.locator('#viewport-error').waitFor({ state: 'visible' });
+        await responsive.locator('#viewport-width').fill('600');
+        await responsive.locator('#viewport-height').fill('960');
+        await responsive.locator('#viewport-density').selectOption('2');
+        await responsive.locator('#apply-viewport').click();
+        await ready(responsive);
+        assert.equal(await responsive.locator('#viewport-panel').isHidden(), true);
+        assert.equal(
+          await responsive.frameLocator('iframe').getByRole('textbox').inputValue(),
+          'keep this page',
+        );
+        assert.deepEqual(
+          await responsive
+            .frameLocator('iframe')
+            .locator('body')
+            .evaluate(() => [innerWidth, innerHeight]),
+          [600, 960],
+        );
+        await responsive.locator('#rotate-button').click();
+        await ready(responsive);
+        assert.deepEqual(
+          await responsive
+            .frameLocator('iframe')
+            .locator('body')
+            .evaluate(() => [innerWidth, innerHeight]),
+          [960, 600],
+        );
+        await responsive.reload();
+        assert.match(await responsive.locator('#viewport-size').textContent(), /960 × 600 · 2×/);
+        assert.equal(
+          await responsive.locator('#rotate-button').getAttribute('aria-label'),
+          'Rotate to portrait',
+        );
+        await responsive.locator('#viewport-size').click();
+        await responsive.locator('#viewport-preset').selectOption('3');
+        assert.equal(await responsive.locator('#viewport-width').inputValue(), '768');
+        assert.equal(await responsive.locator('#viewport-height').inputValue(), '1024');
+        await responsive.locator('#reset-viewport').click();
+        await responsive.locator('#apply-viewport').click();
+        await responsive.waitForFunction(() =>
+          document.querySelector('#viewport-size').textContent.includes('393 × 852 · 3×'),
+        );
+        await responsive.locator('#viewport-size').click();
+        await responsive.keyboard.press('Escape');
+        assert.equal(await responsive.locator('#viewport-panel').isHidden(), true);
+      } finally {
+        await responsive.close();
+      }
+    });
+
     if (process.env.PEW_NATIVE_TEST === '1') {
       assert.equal(process.platform, 'win32', 'Native tests require Windows');
       profile = await mkdtemp(path.join(tmpdir(), 'pew-native-'));
@@ -447,6 +511,57 @@ test('browser and desktop preview flows', { timeout: 120_000 }, async (t) => {
         assert.match(await main.locator('#notice-text').textContent(), /could not be loaded/);
         await main.locator('#home-button').click();
         await main.locator('#empty-state').waitFor({ state: 'visible' });
+      });
+
+      await t.test('native custom viewports update density without losing page state', async () => {
+        await open(main, `${fixtureUrl}/first`);
+        await ready(main);
+        const site = context.pages().find((candidate) => candidate.url().includes(fixtureUrl));
+        await site.getByRole('textbox').fill('viewport state');
+        await main.locator('#viewport-size').click();
+        await main.locator('#viewport-preset').selectOption('3');
+        await main.locator('#apply-viewport').click();
+        await ready(main);
+        assert.deepEqual(
+          await site.evaluate(() => [innerWidth, innerHeight, devicePixelRatio]),
+          [768, 1024, 2],
+        );
+        assert.equal(await site.getByRole('textbox').inputValue(), 'viewport state');
+        const rejection = await main.evaluate(async () => {
+          try {
+            await window.__TAURI_INTERNALS__.invoke('resize_site', {
+              width: 99999,
+              height: 1024,
+              pixelRatio: 2,
+              landscape: false,
+              scale: 0.5,
+            });
+          } catch (error) {
+            return String(error);
+          }
+        });
+        assert.match(rejection, /between 240 and 1920/);
+        assert.deepEqual(
+          await site.evaluate(() => [innerWidth, innerHeight, devicePixelRatio]),
+          [768, 1024, 2],
+        );
+        await main.locator('#viewport-size').click();
+        await main.locator('#viewport-width').fill('600');
+        await main.locator('#viewport-height').fill('900');
+        await main.locator('#viewport-density').selectOption('1');
+        await main.locator('#apply-viewport').click();
+        await ready(main);
+        assert.deepEqual(
+          await site.evaluate(() => [innerWidth, innerHeight, devicePixelRatio]),
+          [600, 900, 1],
+        );
+        await main.locator('#rotate-button').click();
+        await ready(main);
+        assert.deepEqual(
+          await site.evaluate(() => [innerWidth, innerHeight, devicePixelRatio]),
+          [900, 600, 1],
+        );
+        assert.equal(await site.getByRole('textbox').inputValue(), 'viewport state');
       });
     }
     assert.deepEqual(errors, []);

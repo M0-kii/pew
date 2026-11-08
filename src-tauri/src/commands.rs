@@ -20,6 +20,7 @@ pub(crate) struct SiteState {
 pub(crate) struct SiteConfiguration {
     width: u32,
     height: u32,
+    pixel_ratio: u8,
     user_agent: String,
     landscape: bool,
     scale: f64,
@@ -139,11 +140,13 @@ pub(crate) async fn configure_site(
     let SiteConfiguration {
         width,
         height,
+        pixel_ratio,
         user_agent,
         landscape,
         scale,
         session,
     } = options;
+    validate_viewport(width, height, pixel_ratio, scale)?;
     let webview = site(&app, &caller)?;
     #[cfg(windows)]
     observe_navigation(&webview, session).await?;
@@ -152,7 +155,16 @@ pub(crate) async fn configure_site(
     #[cfg(not(windows))]
     let _ = session;
     disable_browser_shortcuts(&webview).await?;
-    emulate_mobile(&webview, width, height, &user_agent, landscape, scale).await
+    emulate_mobile(
+        &webview,
+        width,
+        height,
+        &user_agent,
+        landscape,
+        scale,
+        pixel_ratio,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -191,13 +203,45 @@ pub(crate) async fn resize_site(
     height: u32,
     landscape: bool,
     scale: f64,
+    pixel_ratio: u8,
 ) -> Result<(), String> {
+    validate_viewport(width, height, pixel_ratio, scale)?;
     let webview = site(&app, &caller)?;
     #[cfg(windows)]
-    set_mobile_metrics(&webview, width, height, landscape, scale).await?;
+    set_mobile_metrics(&webview, width, height, landscape, scale, pixel_ratio).await?;
     #[cfg(not(windows))]
-    let _ = (webview, width, height, landscape, scale);
+    let _ = (webview, width, height, landscape, scale, pixel_ratio);
     Ok(())
+}
+
+fn validate_viewport(width: u32, height: u32, pixel_ratio: u8, scale: f64) -> Result<(), String> {
+    if !(240..=1920).contains(&width) || !(240..=1920).contains(&height) {
+        return Err("Viewport dimensions must be between 240 and 1920".into());
+    }
+    if !(1..=3).contains(&pixel_ratio) || !scale.is_finite() || !(0.01..=1.0).contains(&scale) {
+        return Err("Invalid viewport density or display scale".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::validate_viewport;
+    #[test]
+    fn rejects_unsupported_metrics_at_the_command_boundary() {
+        assert!(validate_viewport(393, 852, 3, 0.8).is_ok());
+        assert!(validate_viewport(240, 1920, 1, 0.01).is_ok());
+        for (width, height, density, scale) in [
+            (0, 852, 3, 0.8),
+            (393, 1921, 3, 0.8),
+            (393, 852, 0, 0.8),
+            (393, 852, 4, 0.8),
+            (393, 852, 3, f64::NAN),
+            (393, 852, 3, 0.0),
+        ] {
+            assert!(validate_viewport(width, height, density, scale).is_err());
+        }
+    }
 }
 #[tauri::command]
 pub(crate) async fn site_snapshot(app: AppHandle, caller: Webview) -> Result<String, String> {

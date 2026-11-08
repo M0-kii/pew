@@ -329,12 +329,13 @@ pub(crate) async fn set_mobile_metrics(
     height: u32,
     landscape: bool,
     scale: f64,
+    pixel_ratio: u8,
 ) -> Result<(), String> {
     let metrics = serde_json::json!({
         "width": width.clamp(1, 10000),
         "height": height.clamp(1, 10000),
-        "deviceScaleFactor": 3,
-        "scale": scale.clamp(0.1, 1.0),
+        "deviceScaleFactor": pixel_ratio,
+        "scale": scale.clamp(0.01, 1.0),
         "mobile": true,
         "screenWidth": width.clamp(1, 10000),
         "screenHeight": height.clamp(1, 10000),
@@ -424,6 +425,7 @@ pub(crate) async fn emulate_mobile(
     user_agent: &str,
     landscape: bool,
     scale: f64,
+    pixel_ratio: u8,
 ) -> Result<(), String> {
     let major = user_agent
         .split("Chrome/")
@@ -447,7 +449,7 @@ pub(crate) async fn emulate_mobile(
     });
     call_devtools(webview, "Emulation.setUserAgentOverride", agent.to_string()).await?;
 
-    set_mobile_metrics(webview, width, height, landscape, scale).await?;
+    set_mobile_metrics(webview, width, height, landscape, scale, pixel_ratio).await?;
     call_devtools(
         webview,
         "Emulation.setTouchEmulationEnabled",
@@ -471,6 +473,7 @@ pub(crate) async fn emulate_mobile(
     _user_agent: &str,
     _landscape: bool,
     _scale: f64,
+    _pixel_ratio: u8,
 ) -> Result<(), String> {
     Ok(())
 }
